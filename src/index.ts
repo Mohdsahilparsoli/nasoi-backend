@@ -1,6 +1,6 @@
 // Vercel entrypoint: the Express app is exported and run as a Vercel Function.
 import express from "express";
-import { createApp } from "./app.js";
+import { createApp } from "./create-app.js";
 
 function build() {
   try {

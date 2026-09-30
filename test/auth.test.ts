@@ -6,7 +6,7 @@ import { after, before, describe, test } from "node:test";
 
 if (existsSync(".env")) process.loadEnvFile(".env");
 process.env.NODE_ENV = "test";
-const { createApp } = await import("../src/app.js");
+const { createApp } = await import("../src/create-app.js");
 const { prisma } = await import("../src/db.js");
 // Test-only helper for direct SQL (fixed strings, no user input).
 const query = async <T = unknown>(sql: string) =>
