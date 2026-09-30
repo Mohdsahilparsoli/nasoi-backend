@@ -1,34 +1,34 @@
-import pg from "pg";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { config } from "./config.js";
+import { PrismaClient } from "./generated/prisma/client.js";
 
-let pool: pg.Pool | undefined;
+let client: PrismaClient | undefined;
+
+/** TLS settings for the pg driver. Default: encrypted and certificate verified. */
+function ssl() {
+  const c = config();
+  if (c.DATABASE_SSL === "disable") return false;
+  if (c.DATABASE_SSL === "require") return { rejectUnauthorized: false }; // encrypted, not verified
+  return c.DATABASE_SSL_CA ? { ca: c.DATABASE_SSL_CA, rejectUnauthorized: true } : { rejectUnauthorized: true };
+}
 
 /**
- * One small pool per serverless instance. Use the Supabase *transaction pooler*
- * URL (port 6543) in production so many instances share few DB connections.
+ * One Prisma client per serverless instance, using the `pg` driver adapter.
+ * Works with any PostgreSQL URL (Prisma Postgres pooled URL recommended).
  */
-export function db(): pg.Pool {
-  if (pool) return pool;
+export function prisma(): PrismaClient {
+  if (client) return client;
   const c = config();
   const url = new URL(c.DATABASE_URL);
-  // SSL is configured below; drop sslmode from the URL so it cannot override it.
+  // TLS is configured explicitly below, so sslmode in the URL cannot weaken it.
   url.searchParams.delete("sslmode");
-  pool = new pg.Pool({
+  const adapter = new PrismaPg({
     connectionString: url.toString(),
+    ssl: ssl(),
     max: c.isProd ? 3 : 10,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 8_000,
-    ssl:
-      c.DATABASE_SSL === "disable"
-        ? false
-        : c.DATABASE_SSL_CA
-          ? { ca: c.DATABASE_SSL_CA, rejectUnauthorized: true }
-          : { rejectUnauthorized: false }, // encrypted; add DATABASE_SSL_CA to also verify the server
   });
-  pool.on("error", (err) => console.error("[db] idle client error", err.message));
-  return pool;
-}
-
-export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) {
-  return db().query<T>(text, params);
+  client = new PrismaClient({ adapter });
+  return client;
 }

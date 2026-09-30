@@ -2,7 +2,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import { config } from "./config.js";
-import { query } from "./db.js";
+import { prisma } from "./db.js";
 import { errorHandler, notFound } from "./lib/http.js";
 import { CLIENT_HEADER, csrfGuard, securityHeaders } from "./middleware/security.js";
 import { authRouter } from "./modules/auth/routes.js";
@@ -32,7 +32,7 @@ export function createApp() {
   app.get("/api/v1/health", async (_req, res) => {
     let database = "down";
     try {
-      await query("select 1");
+      await prisma().$queryRaw`select 1`;
       database = "up";
     } catch (err) {
       console.error("[health] db check failed", (err as Error).message);

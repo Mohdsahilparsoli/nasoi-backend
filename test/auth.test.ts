@@ -7,7 +7,10 @@ import { after, before, describe, test } from "node:test";
 if (existsSync(".env")) process.loadEnvFile(".env");
 process.env.NODE_ENV = "test";
 const { createApp } = await import("../src/app.js");
-const { query, db } = await import("../src/db.js");
+const { prisma } = await import("../src/db.js");
+// Test-only helper for direct SQL (fixed strings, no user input).
+const query = async <T = unknown>(sql: string) =>
+  /^\s*select/i.test(sql) ? { rows: (await prisma().$queryRawUnsafe(sql)) as T[] } : (await prisma().$executeRawUnsafe(sql), { rows: [] as T[] });
 
 let base = "";
 let server: ReturnType<ReturnType<typeof createApp>["listen"]>;
@@ -21,7 +24,7 @@ before(async () => {
 });
 after(async () => {
   server.close();
-  await db().end();
+  await prisma().$disconnect();
 });
 
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>

@@ -1,6 +1,6 @@
 # NASOI Backend API
 
-REST API for the **NASOI School Data Entry Portal**, built with Node.js, Express 5, and PostgreSQL (Supabase).
+REST API for the **NASOI School Data Entry Portal**, built with Node.js, Express 5, **Prisma 7** (`@prisma/adapter-pg`) and **PostgreSQL** (Prisma Postgres).
 It is deployed to Vercel as a separate project from the Next.js frontend.
 
 **Live API:** `https://nasoi-api.vercel.app` (the default everywhere for now; it will move to `https://api.nasoi.com` later).
@@ -40,34 +40,39 @@ All `POST` requests must send the header `X-NASOI-Client: web`.
   - `Cache-Control: no-store` on auth responses.
   - No stack traces are sent to clients.
 - **Database:**
-  - Only parameterised SQL is used.
-  - Row Level Security is on and access is revoked for Supabase's `anon` and `authenticated` roles, so the public Supabase REST API cannot read these tables.
+  - All access goes through Prisma (parameterised queries only).
+  - TLS is on and the certificate is verified by default.
 - **Audit log:** `audit_logs` records logins, failures, lockouts, token reuse, logouts and password changes. It never stores secrets.
 
 ## Setup
 
-### 1. Database (one time)
+The whole app runs from one database URL. Tables are created and updated **automatically on every deploy**: Vercel runs `prisma migrate deploy`, so no manual SQL is needed.
 
-In Supabase, open **SQL Editor**, paste the contents of `db/SUPABASE_SETUP.sql`, and click **Run**.
-This creates the `users`, `auth_sessions` and `audit_logs` tables and the demo accounts. It is safe to re-run.
+### Environment variables
 
-### 2. Environment variables
-
-Set these in Vercel → Project → Settings → Environment Variables. **Never commit them.**
+Set these in Vercel → **nasoi-api** → Settings → Environment Variables. **Never commit them.**
 
 | Key | Value |
 |---|---|
-| `DATABASE_URL` | Supabase → Connect → **Transaction pooler** URI (port 6543), with your DB password |
-| `JWT_SECRET` | The output of `openssl rand -base64 48` |
-| `CORS_ORIGINS` | `https://nasoi-frontend.vercel.app` (comma-separate any extra origins) |
-| `DATABASE_SSL_CA` | *(optional)* The Supabase root certificate (PEM), for full certificate verification |
+| `DATABASE_URL` | Prisma Console → NASOI database → Connect → the **pooled** URL (`…@pooled.db.prisma.io:5432/postgres?sslmode=require`) |
+| `JWT_SECRET` | The output of `openssl rand -base64 48` (already set) |
+| `CORS_ORIGINS` | `https://nasoi-frontend.vercel.app` (already set) |
+| `SEED_DEMO_USERS` | `true` creates the demo accounts on deploy; set it to `false` for real launch |
+| `DIRECT_DATABASE_URL` | *(optional)* A direct, non-pooled URL used only for migrations |
 
-### 3. Local development
+### Database schema
+
+- The schema is `prisma/schema.prisma`, with the tables `users`, `auth_sessions` and `audit_logs`.
+- Migrations live in `prisma/migrations/`.
+- To change the schema: edit `schema.prisma`, run `npm run db:migrate:dev -- --name <change>`, commit, and push. The next deploy applies the change.
+
+### Local development
 
 ```bash
 npm install
 cp .env.example .env      # fill in the values
-npm run db:migrate -- --seed
+npm run db:generate
+npm run db:migrate && npm run db:seed
 npm run dev               # http://localhost:4000
 npm test                  # integration tests (needs a Postgres in DATABASE_URL)
 ```

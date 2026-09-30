@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { query } from "../db.js";
+import { prisma } from "../db.js";
 import { clientIp, userAgent } from "./http.js";
 
 export type AuditAction =
@@ -7,21 +7,14 @@ export type AuditAction =
   | "login.failed"
   | "login.locked"
   | "login.blocked"
-  | "token.refresh"
   | "token.reuse_detected"
   | "logout"
   | "password.changed";
 
 /** Append-only security log. Never stores passwords or tokens. */
-export async function audit(req: Request, action: AuditAction, userId: string | null, meta: Record<string, unknown> = {}) {
+export async function audit(req: Request, action: AuditAction, userId: string | null, meta: Record<string, string | number | boolean> = {}) {
   try {
-    await query("insert into audit_logs (user_id, action, ip, user_agent, meta) values ($1, $2, $3, $4, $5)", [
-      userId,
-      action,
-      clientIp(req),
-      userAgent(req),
-      JSON.stringify(meta),
-    ]);
+    await prisma().auditLog.create({ data: { userId, action, ip: clientIp(req), userAgent: userAgent(req), meta } });
   } catch (err) {
     // Auditing must never break the request.
     console.error("[audit] failed to write", action, (err as Error).message);

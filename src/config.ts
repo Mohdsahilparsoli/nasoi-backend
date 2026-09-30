@@ -8,10 +8,10 @@ import { z } from "zod";
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DATABASE_URL: z.string().url("DATABASE_URL must be a postgres connection URL"),
-  /** PEM of the Supabase root CA (optional). When set, the DB certificate is fully verified. */
+  /** Optional custom CA (PEM) if the database uses a private certificate authority. */
   DATABASE_SSL_CA: z.string().optional(),
-  /** Set to "disable" only for a local Postgres without TLS. */
-  DATABASE_SSL: z.enum(["require", "disable"]).default("require"),
+  /** "verify" (default, encrypted + certificate checked) · "require" (encrypted only) · "disable" (local Postgres only). */
+  DATABASE_SSL: z.enum(["verify", "require", "disable"]).default("verify"),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
   /** Comma separated list of browser origins allowed to call the API. */
   CORS_ORIGINS: z.string().default("http://localhost:3000"),

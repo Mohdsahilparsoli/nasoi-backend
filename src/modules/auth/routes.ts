@@ -29,7 +29,7 @@ const loginLimiter = rateLimit({
   limit: 10,
   standardHeaders: "draft-8",
   legacyHeaders: false,
-  keyGenerator: (req) => `${clientIp(req)}|${auth.normaliseLoginId(String(req.body?.loginId ?? ""))}`,
+  keyGenerator: (req) => `${clientIp(req)}|${auth.normaliseLoginId(String(req.body?.loginId ?? "")).value}`,
   message: { error: { code: "RATE_LIMITED", message: "Too many login attempts. Please wait 15 minutes and try again." } },
 });
 const refreshLimiter = rateLimit({

@@ -1,0 +1,86 @@
+// NASOI database schema (Prisma 7). Tables are created/updated automatically
+// on every deploy with `prisma migrate deploy` — no manual SQL needed.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  runtime             = "nodejs"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  deo
+  verifier
+  admin
+}
+
+enum UserStatus {
+  active
+  blocked
+}
+
+/// Every portal account: Data Entry Operator, Verifier or Super Admin.
+model User {
+  id                String     @id // DEO126, VR101, ADMIN …
+  role              Role
+  name              String
+  mobile            String?    @unique @db.VarChar(10)
+  email             String?    @unique // stored lower-case
+  passwordHash      String     @map("password_hash") // bcrypt, never plain text
+  status            UserStatus @default(active)
+  failedLoginCount  Int        @default(0) @map("failed_login_count")
+  lockedUntil       DateTime?  @map("locked_until") @db.Timestamptz(6)
+  lastLoginAt       DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  passwordChangedAt DateTime?  @map("password_changed_at") @db.Timestamptz(6)
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions  AuthSession[]
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+/// One login on one browser. Only the SHA-256 of the refresh secret is stored.
+model AuthSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id")
+  role          Role
+  tokenHash     String    @map("token_hash")
+  prevTokenHash String?   @map("prev_token_hash") // previous hash, to detect replay
+  rotatedAt     DateTime? @map("rotated_at") @db.Timestamptz(6)
+  ip            String?
+  userAgent     String?   @map("user_agent")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt    DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(6)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokeReason  String?   @map("revoke_reason")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
+
+/// Append-only security log (never stores passwords or tokens).
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  userId    String?  @map("user_id")
+  action    String
+  ip        String?
+  userAgent String?  @map("user_agent")
+  meta      Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
