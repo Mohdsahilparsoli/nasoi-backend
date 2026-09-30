@@ -4,6 +4,7 @@ import { z } from "zod";
 import { config } from "../../config.js";
 import { clientIp } from "../../lib/http.js";
 import { noStore, requireAuth } from "../../middleware/security.js";
+import { passwordRule } from "../registration/schema.js";
 import * as auth from "./service.js";
 import { ROLES, type Role, refreshCookieName } from "./tokens.js";
 
@@ -15,12 +16,6 @@ const loginBody = z.object({
   password: z.string().min(1, "Enter your password").max(128),
 });
 const roleBody = z.object({ role: z.enum(ROLES) });
-export const passwordRule = z
-  .string()
-  .min(8, "Password must be at least 8 characters")
-  .max(72, "Password must be at most 72 characters")
-  .regex(/[A-Za-z]/, "Password must contain a letter")
-  .regex(/\d/, "Password must contain a number");
 const changePwBody = z.object({ currentPassword: z.string().min(1).max(128), newPassword: passwordRule });
 
 /** Per IP + login ID, so one attacker cannot hammer an account and other users are never affected. */

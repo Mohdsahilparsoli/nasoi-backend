@@ -13,12 +13,17 @@ const schema = z.object({
   /** "verify" (default, encrypted + certificate checked) · "require" (encrypted only) · "disable" (local Postgres only). */
   DATABASE_SSL: z.enum(["verify", "require", "disable"]).default("verify"),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
+  /** 32 random bytes, base64. Encrypts Aadhaar, bank account and uploaded documents. */
+  DATA_ENCRYPTION_KEY: z.string().min(40, "DATA_ENCRYPTION_KEY must be 32 bytes in base64 (openssl rand -base64 32)"),
   /** Comma separated list of browser origins allowed to call the API. */
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   ACCESS_TOKEN_TTL_MIN: z.coerce.number().int().min(5).max(60).default(15),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
   MAX_FAILED_LOGINS: z.coerce.number().int().min(3).max(20).default(5),
   LOCK_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+  /** Per IP, per hour. */
+  UPLOADS_PER_HOUR: z.coerce.number().int().min(1).default(60),
+  REGISTRATIONS_PER_HOUR: z.coerce.number().int().min(1).default(20),
 });
 
 export type Config = z.infer<typeof schema> & { corsOrigins: string[]; isProd: boolean };

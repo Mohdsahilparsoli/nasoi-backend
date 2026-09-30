@@ -42,6 +42,8 @@ model User {
 
   sessions  AuthSession[]
   auditLogs AuditLog[]
+  profile   Profile?
+  documents Document[]
 
   @@map("users")
 }
@@ -83,4 +85,82 @@ model AuditLog {
   @@index([userId, createdAt(sort: Desc)])
   @@index([action, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+enum DocumentKind {
+  aadhaar
+  pan
+  bank_proof
+  photo
+  signature
+}
+
+/// Registration details of a DEO / Verifier. Aadhaar and bank account numbers
+/// are stored AES-256-GCM encrypted; only the last 4 digits are kept in clear.
+model Profile {
+  userId        String   @id @map("user_id")
+  fatherName    String   @map("father_name")
+  motherName    String   @map("mother_name")
+  dob           DateTime @db.Date
+  gender        String
+  category      String
+  religion      String
+  altMobile     String?  @map("alt_mobile") @db.VarChar(10)
+  country       String
+  state         String
+  district      String
+  subDistrict   String   @map("sub_district")
+  postOffice    String   @map("post_office")
+  pincode       String   @db.VarChar(6)
+  policeStation String   @map("police_station")
+  address       String
+  qualification String
+  aadhaarLast4  String   @map("aadhaar_last4") @db.VarChar(4)
+  aadhaarHash   String   @unique @map("aadhaar_hash") // HMAC-SHA256, for duplicate check
+  aadhaarEnc    String   @map("aadhaar_enc")
+  pan           String?  @db.VarChar(10)
+  bankName      String   @map("bank_name")
+  accountHolder String   @map("account_holder")
+  accountLast4  String   @map("account_last4") @db.VarChar(4)
+  accountEnc    String   @map("account_enc")
+  ifsc          String   @db.VarChar(11)
+  bankProofType String   @map("bank_proof_type")
+  termsAcceptedAt DateTime @map("terms_accepted_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+/// Uploaded file (encrypted). Uploaded before the form is submitted, then
+/// attached to the new user; unattached uploads can be purged after 24 hours.
+model Document {
+  id              String       @id @default(uuid()) @db.Uuid
+  userId          String?      @map("user_id")
+  kind            DocumentKind
+  fileName        String       @map("file_name")
+  mimeType        String       @map("mime_type")
+  size            Int
+  sha256          String
+  data            Bytes // AES-256-GCM encrypted file bytes
+  uploadTokenHash String       @map("upload_token_hash")
+  ip              String?
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  attachedAt      DateTime?    @map("attached_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([attachedAt, createdAt])
+  @@map("documents")
+}
+
+/// Sequence for readable IDs (DEO1001, VR201 …).
+model IdCounter {
+  key   String @id
+  value Int
+
+  @@map("id_counters")
 }

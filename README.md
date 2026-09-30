@@ -5,7 +5,7 @@ It is deployed to Vercel as a separate project from the Next.js frontend.
 
 **Live API:** `https://nasoi-api.vercel.app` (the default everywhere for now; it will move to `https://api.nasoi.com` later).
 
-This first module is **Login / Auth**. The other modules (registration, assignments, entries, verification, payouts) will be added one by one.
+Modules done: **Login / Auth** and **Registration** (DEO & Verifier, with documents and profile). The other modules (registration, assignments, entries, verification, payouts) will be added one by one.
 
 ## Endpoints (v1)
 
@@ -17,6 +17,12 @@ This first module is **Login / Auth**. The other modules (registration, assignme
 | POST | `/api/v1/auth/logout` | refresh cookie | `{ role }` → revokes the session |
 | GET  | `/api/v1/auth/me` | Bearer | The current user |
 | POST | `/api/v1/auth/change-password` | Bearer | `{ currentPassword, newPassword }` → logs out all other devices |
+| POST | `/api/v1/registrations/uploads` | – | multipart `kind` + `file` (PDF/JPG/PNG ≤ 2 MB, type checked from file bytes) → `{ upload: { id, token } }` |
+| POST | `/api/v1/registrations` | – | Full registration form + upload refs + password → `{ user }` (role `deo` → `DEO1001…`, `verifier` → `VR201…`) |
+| GET  | `/api/v1/profile/me` | Bearer | Own profile (Aadhaar / account masked) and document list |
+| PATCH | `/api/v1/profile/me/contact` | Bearer | Mobile, alternate mobile, email, address |
+| PATCH | `/api/v1/profile/me/bank` | Bearer | Bank details |
+| GET  | `/api/v1/documents/:id` | Bearer | View a document (owner, verifier or admin) |
 
 All `POST` requests must send the header `X-NASOI-Client: web`.
 
@@ -42,6 +48,13 @@ All `POST` requests must send the header `X-NASOI-Client: web`.
 - **Database:**
   - All access goes through Prisma (parameterised queries only).
   - TLS is on and the certificate is verified by default.
+- **Sensitive data:**
+  - Aadhaar and bank account numbers are stored AES-256-GCM encrypted (`DATA_ENCRYPTION_KEY`). Only the last 4 digits are kept in clear.
+  - Duplicate Aadhaar is detected with a keyed HMAC, never the plain number.
+  - Uploaded documents are encrypted in the database.
+- **Uploads:**
+  - Each file gets a one-time token and must be attached within 24 hours.
+  - Uploads and registrations are rate-limited per IP.
 - **Audit log:** `audit_logs` records logins, failures, lockouts, token reuse, logouts and password changes. It never stores secrets.
 
 ## Setup
@@ -57,6 +70,7 @@ Set these in Vercel → **nasoi-api** → Settings → Environment Variables. **
 | `DATABASE_URL` | Prisma Console → NASOI database → Connect → the **pooled** URL (`…@pooled.db.prisma.io:5432/postgres?sslmode=require`) |
 | `JWT_SECRET` | The output of `openssl rand -base64 48` (already set) |
 | `CORS_ORIGINS` | `https://nasoi-frontend.vercel.app` (already set) |
+| `DATA_ENCRYPTION_KEY` | The output of `openssl rand -base64 32`. **Keep a backup** — without it, encrypted Aadhaar, account numbers and documents cannot be read |
 | `SEED_DEMO_USERS` | `true` creates the demo accounts on deploy; set it to `false` for real launch |
 | `DIRECT_DATABASE_URL` | *(optional)* A direct, non-pooled URL used only for migrations |
 

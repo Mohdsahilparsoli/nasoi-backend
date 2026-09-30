@@ -3,9 +3,11 @@ import cors from "cors";
 import express from "express";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
-import { errorHandler, notFound } from "./lib/http.js";
+import { clientIp, errorHandler, notFound } from "./lib/http.js";
 import { CLIENT_HEADER, csrfGuard, securityHeaders } from "./middleware/security.js";
 import { authRouter } from "./modules/auth/routes.js";
+import { documentsRouter, profileRouter } from "./modules/profile/routes.js";
+import { registrationRouter } from "./modules/registration/routes.js";
 
 export function createApp() {
   const c = config();
@@ -38,11 +40,14 @@ export function createApp() {
       console.error("[health] db check failed", (err as Error).message);
     }
     res.setHeader("Cache-Control", "no-store");
-    res.status(database === "up" ? 200 : 503).json({ status: database === "up" ? "ok" : "degraded", database, time: new Date().toISOString() });
+    res.status(database === "up" ? 200 : 503).json({ status: database === "up" ? "ok" : "degraded", database, time: new Date().toISOString(), clientIp: clientIp(_req) });
   });
 
   app.use("/api/v1", csrfGuard);
   app.use("/api/v1/auth", authRouter);
+  app.use("/api/v1/registrations", registrationRouter);
+  app.use("/api/v1/profile", profileRouter);
+  app.use("/api/v1/documents", documentsRouter);
 
   app.use(notFound);
   app.use(errorHandler);
