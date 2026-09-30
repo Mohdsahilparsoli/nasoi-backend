@@ -56,3 +56,17 @@ export function noStore(_req: Request, res: Response, next: NextFunction) {
   res.setHeader("Pragma", "no-cache");
   next();
 }
+
+/** Strict security headers for a JSON-only API (what helmet would set, tuned for an API). */
+export function securityHeaders(_req: Request, res: Response, next: NextFunction) {
+  res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+  res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+  res.setHeader("X-DNS-Prefetch-Control", "off");
+  res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+  next();
+}

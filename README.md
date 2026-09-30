@@ -33,7 +33,7 @@ All `POST` requests must send the header `X-NASOI-Client: web`.
   - The refresh token rotates on every use. Replaying an old token kills the session.
 - **CSRF:** SameSite=Strict cookies, a custom header, and an Origin allowlist.
 - **HTTP hardening:**
-  - Helmet headers and CORS allowlist.
+  - Strict security headers (CSP, HSTS, nosniff, frame deny) and a CORS allowlist.
   - A 20 kb body limit.
   - `Cache-Control: no-store` on auth responses.
   - No stack traces are sent to clients.

@@ -1,11 +1,10 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import helmet from "helmet";
 import { config } from "./config.js";
 import { query } from "./db.js";
 import { errorHandler, notFound } from "./lib/http.js";
-import { CLIENT_HEADER, csrfGuard } from "./middleware/security.js";
+import { CLIENT_HEADER, csrfGuard, securityHeaders } from "./middleware/security.js";
 import { authRouter } from "./modules/auth/routes.js";
 
 export function createApp() {
@@ -16,12 +15,7 @@ export function createApp() {
   // Behind Vercel's proxy: trust exactly one hop for the client IP.
   app.set("trust proxy", 1);
 
-  app.use(
-    helmet({
-      contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } },
-      crossOriginResourcePolicy: { policy: "same-site" },
-    }),
-  );
+  app.use(securityHeaders);
   app.use(
     cors({
       origin: (origin, cb) => cb(null, !origin || c.corsOrigins.includes(origin.replace(/\/$/, ""))),
