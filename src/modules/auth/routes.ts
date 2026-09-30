@@ -16,6 +16,8 @@ const loginBody = z.object({
   password: z.string().min(1, "Enter your password").max(128),
 });
 const roleBody = z.object({ role: z.enum(ROLES) });
+const forgotBody = z.object({ email: z.string().trim().toLowerCase().max(80).email("Enter a valid email ID") });
+const resetBody = z.object({ token: z.string().min(20, "Invalid reset link").max(2000), newPassword: passwordRule });
 const changePwBody = z.object({ currentPassword: z.string().min(1).max(128), newPassword: passwordRule });
 
 /** Per IP + login ID, so one attacker cannot hammer an account and other users are never affected. */
@@ -91,4 +93,44 @@ authRouter.post("/change-password", requireAuth(), async (req, res) => {
   const body = changePwBody.parse(req.body);
   await auth.changePassword(req, req.auth!.sub, req.auth!.sid, body.currentPassword, body.newPassword);
   res.json({ ok: true, message: "Password changed successfully." });
+});
+
+/** Per IP + e-mail (stops mail bombing one person) and per IP overall. */
+const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 3,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => `${clientIp(req)}|${String(req.body?.email ?? "").trim().toLowerCase()}`,
+  message: { error: { code: "RATE_LIMITED", message: "Too many requests for this email. Please wait 15 minutes and try again." } },
+});
+const forgotIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => clientIp(req),
+  message: { error: { code: "RATE_LIMITED", message: "Too many requests. Please try again later." } },
+});
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => clientIp(req),
+  message: { error: { code: "RATE_LIMITED", message: "Too many attempts. Please try again later." } },
+});
+
+/** POST /api/v1/auth/forgot-password – always the same answer, whether the e-mail exists or not. */
+authRouter.post("/forgot-password", forgotIpLimiter, forgotLimiter, async (req, res) => {
+  const { email } = forgotBody.parse(req.body);
+  await auth.forgotPassword(req, email);
+  res.json({ ok: true, message: "If an account exists with this email, a password reset link has been sent. Please check your inbox and spam folder." });
+});
+
+/** POST /api/v1/auth/reset-password – token from the e-mail link + new password. */
+authRouter.post("/reset-password", resetLimiter, async (req, res) => {
+  const { token, newPassword } = resetBody.parse(req.body);
+  await auth.resetPassword(req, token, newPassword);
+  res.json({ ok: true, message: "Your password has been changed. Please log in with the new password." });
 });

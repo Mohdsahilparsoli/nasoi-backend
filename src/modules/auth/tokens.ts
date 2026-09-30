@@ -66,3 +66,33 @@ export function safeEqualHex(a: string | null | undefined, b: string) {
 export function refreshCookieName(role: Role) {
   return `nasoi_rt_${role}`;
 }
+
+/* ------------------------------------------------------------------ */
+/* Password reset link                                                */
+/* ------------------------------------------------------------------ */
+
+const RESET_AUDIENCE = "nasoi-password-reset";
+
+/**
+ * Fingerprint of the current password hash. It is put in the reset JWT, so the
+ * link stops working as soon as the password changes (i.e. it is single-use).
+ */
+export const passwordFingerprint = (passwordHash: string) => sha256(`pwf:${passwordHash}`).slice(0, 24);
+
+export async function signResetToken(userId: string, passwordHash: string) {
+  const ttl = config().RESET_TOKEN_TTL_MIN;
+  return new SignJWT({ pwf: passwordFingerprint(passwordHash) })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(userId)
+    .setIssuer(ISSUER)
+    .setAudience(RESET_AUDIENCE) // cannot be used as an access token
+    .setIssuedAt()
+    .setExpirationTime(`${ttl}m`)
+    .sign(key());
+}
+
+export async function verifyResetToken(token: string): Promise<{ sub: string; pwf: string }> {
+  const { payload } = await jwtVerify(token, key(), { issuer: ISSUER, audience: RESET_AUDIENCE, algorithms: ["HS256"] });
+  if (typeof payload.sub !== "string" || typeof payload.pwf !== "string") throw new Error("Malformed token");
+  return { sub: payload.sub, pwf: payload.pwf };
+}

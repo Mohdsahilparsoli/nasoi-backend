@@ -5,7 +5,8 @@ import { prisma } from "../../db.js";
 import type { User } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
 import { HttpError, clientIp, userAgent } from "../../lib/http.js";
-import { newRefreshSecret, parseRefreshToken, sha256, signAccessToken, type Role } from "./tokens.js";
+import { mailEnabled, resetPasswordEmail, sendMail } from "../../lib/mailer.js";
+import { newRefreshSecret, parseRefreshToken, passwordFingerprint, sha256, signAccessToken, signResetToken, verifyResetToken, type Role } from "./tokens.js";
 
 export const BCRYPT_COST = 12;
 
@@ -184,4 +185,74 @@ export async function changePassword(req: Request, userId: string, sessionId: st
     }),
   ]);
   await audit(req, "password.changed", userId);
+}
+
+/* ------------------------------------------------------------------ */
+/* Forgot / reset password                                            */
+/* ------------------------------------------------------------------ */
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Every forgot-password answer takes at least this long, so timing does not reveal which e-mails exist. */
+const FORGOT_MIN_MS = 1500;
+
+/**
+ * Sends a reset link if an active account has this e-mail.
+ * The caller always gets the same answer, whether or not the account exists.
+ */
+export async function forgotPassword(req: Request, email: string) {
+  if (!mailEnabled()) throw new HttpError(503, "Password reset by e-mail is not available right now. Please contact the admin.", "MAIL_DISABLED");
+  const started = Date.now();
+  try {
+    const user = await prisma().user.findUnique({ where: { email: email.trim().toLowerCase() } });
+    if (!user || user.status !== "active") {
+      await audit(req, "password.reset_requested", null, { found: false });
+      return;
+    }
+    const token = await signResetToken(user.id, user.passwordHash);
+    // Token goes in the URL fragment (#), which browsers never send to servers or logs.
+    const link = `${config().APP_URL.replace(/\/$/, "")}/reset-password#token=${token}`;
+    const mail = resetPasswordEmail(user.name, link, config().RESET_TOKEN_TTL_MIN);
+    try {
+      await sendMail({ to: user.email!, ...mail });
+      await audit(req, "password.reset_requested", user.id, { found: true, sent: true });
+    } catch (err) {
+      console.error("[mail] reset e-mail failed", (err as Error).message);
+      await audit(req, "password.reset_requested", user.id, { found: true, sent: false });
+      throw new HttpError(502, "We could not send the e-mail right now. Please try again in a few minutes.", "MAIL_FAILED");
+    }
+  } finally {
+    const left = FORGOT_MIN_MS - (Date.now() - started);
+    if (left > 0) await sleep(left);
+  }
+}
+
+/** Sets a new password from a valid, unused reset link and logs out every device. */
+export async function resetPassword(req: Request, token: string, newPassword: string) {
+  const invalid = new HttpError(400, "This reset link is invalid or has expired. Please request a new one.", "BAD_RESET_LINK");
+  let claims: { sub: string; pwf: string };
+  try {
+    claims = await verifyResetToken(token);
+  } catch {
+    throw invalid;
+  }
+  const db = prisma();
+  const user = await db.user.findUnique({ where: { id: claims.sub } });
+  // A changed password (including a previous reset with this link) changes the fingerprint.
+  if (!user || user.status !== "active" || passwordFingerprint(user.passwordHash) !== claims.pwf) throw invalid;
+  if (await bcrypt.compare(newPassword, user.passwordHash)) {
+    throw new HttpError(400, "New password must be different from the current password.", "SAME_PASSWORD");
+  }
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
+  await db.$transaction([
+    db.user.update({
+      where: { id: user.id },
+      data: { passwordHash, passwordChangedAt: new Date(), failedLoginCount: 0, lockedUntil: null },
+    }),
+    db.authSession.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date(), revokeReason: "password_reset" },
+    }),
+  ]);
+  await audit(req, "password.reset", user.id);
+  return { id: user.id };
 }

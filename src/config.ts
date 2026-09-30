@@ -24,6 +24,16 @@ const schema = z.object({
   /** Per IP, per hour. */
   UPLOADS_PER_HOUR: z.coerce.number().int().min(1).default(60),
   REGISTRATIONS_PER_HOUR: z.coerce.number().int().min(1).default(20),
+  /** Public URL of the website, used in e-mail links. */
+  APP_URL: z.string().url().default("https://nasoi-frontend.vercel.app"),
+  /** SMTP (Nodemailer). If SMTP_HOST is empty, password-reset e-mails are disabled. */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  /** e.g. "NASOI <no-reply@yourdomain.com>" */
+  SMTP_FROM: z.string().optional(),
+  RESET_TOKEN_TTL_MIN: z.coerce.number().int().min(5).max(120).default(30),
 });
 
 export type Config = z.infer<typeof schema> & { corsOrigins: string[]; isProd: boolean };

@@ -10,6 +10,8 @@ export type AuditAction =
   | "token.reuse_detected"
   | "logout"
   | "password.changed"
+  | "password.reset_requested"
+  | "password.reset"
   | "user.registered"
   | "profile.updated"
   | "document.viewed";

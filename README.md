@@ -17,6 +17,8 @@ Modules done: **Login / Auth** and **Registration** (DEO & Verifier, with docume
 | POST | `/api/v1/auth/logout` | refresh cookie | `{ role }` → revokes the session |
 | GET  | `/api/v1/auth/me` | Bearer | The current user |
 | POST | `/api/v1/auth/change-password` | Bearer | `{ currentPassword, newPassword }` → logs out all other devices |
+| POST | `/api/v1/auth/forgot-password` | – | `{ email }` → e-mails a reset link (JWT, 30 min, single-use). Same answer whether the e-mail exists or not |
+| POST | `/api/v1/auth/reset-password` | – | `{ token, newPassword }` → sets the password, logs out all devices |
 | POST | `/api/v1/registrations/uploads` | – | multipart `kind` + `file` (PDF/JPG/PNG ≤ 2 MB, type checked from file bytes) → `{ upload: { id, token } }` |
 | POST | `/api/v1/registrations` | – | Full registration form + upload refs + password → `{ user }` (role `deo` → `DEO1001…`, `verifier` → `VR201…`) |
 | GET  | `/api/v1/profile/me` | Bearer | Own profile (Aadhaar / account masked) and document list |
@@ -55,6 +57,13 @@ All `POST` requests must send the header `X-NASOI-Client: web`.
 - **Uploads:**
   - Each file gets a one-time token and must be attached within 24 hours.
   - Uploads and registrations are rate-limited per IP.
+- **Password reset:**
+  - The e-mailed link carries a signed JWT that lasts 30 minutes, with its own audience so it can never be used as a login token.
+  - The JWT holds a fingerprint of the current password hash, so the link stops working after one use or after any password change.
+  - The link puts the token after `#`, so browsers never send it to servers or write it to logs.
+  - The answer is the same (and takes the same time) whether the e-mail exists or not.
+  - Requests are rate-limited per e-mail and per IP.
+  - A reset logs the account out on every device.
 - **Audit log:** `audit_logs` records logins, failures, lockouts, token reuse, logouts and password changes. It never stores secrets.
 
 ## Setup
@@ -70,6 +79,10 @@ Set these in Vercel → **nasoi-api** → Settings → Environment Variables. **
 | `DATABASE_URL` | Prisma Console → NASOI database → Connect → the **pooled** URL (`…@pooled.db.prisma.io:5432/postgres?sslmode=require`) |
 | `JWT_SECRET` | The output of `openssl rand -base64 48` (already set) |
 | `CORS_ORIGINS` | `https://nasoi-frontend.vercel.app` (already set) |
+| `SMTP_HOST` / `SMTP_PORT` | SMTP server for e-mails (Nodemailer), e.g. `smtp.hostinger.com` / `465` or `smtp.gmail.com` / `587` |
+| `SMTP_USER` / `SMTP_PASS` | SMTP login (for Gmail use an App Password) |
+| `SMTP_FROM` | Sender, e.g. `NASOI <no-reply@yourdomain.com>` |
+| `APP_URL` | Website URL used in e-mail links (default `https://nasoi-frontend.vercel.app`) |
 | `DATA_ENCRYPTION_KEY` | The output of `openssl rand -base64 32`. **Keep a backup** — without it, encrypted Aadhaar, account numbers and documents cannot be read |
 | `SEED_DEMO_USERS` | `true` creates the demo accounts on deploy; set it to `false` for real launch |
 | `DIRECT_DATABASE_URL` | *(optional)* A direct, non-pooled URL used only for migrations |
