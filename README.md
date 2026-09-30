@@ -3,6 +3,8 @@
 REST API for the **NASOI School Data Entry Portal**, built with Node.js, Express 5, and PostgreSQL (Supabase).
 It is deployed to Vercel as a separate project from the Next.js frontend.
 
+**Live API:** `https://nasoi-api.vercel.app` (the default everywhere for now; it will move to `https://api.nasoi.com` later).
+
 This first module is **Login / Auth**. The other modules (registration, assignments, entries, verification, payouts) will be added one by one.
 
 ## Endpoints (v1)
