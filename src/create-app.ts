@@ -10,6 +10,7 @@ import { documentsRouter, profileRouter } from "./modules/profile/routes.js";
 import { registrationRouter } from "./modules/registration/routes.js";
 import { adminRouter } from "./modules/admin/routes.js";
 import { meRouter, notificationsRouter } from "./modules/notifications/routes.js";
+import { verifierRouter } from "./modules/verifier/routes.js";
 
 export function createApp() {
   const c = config();
@@ -53,6 +54,7 @@ export function createApp() {
   app.use("/api/v1/admin", adminRouter);
   app.use("/api/v1/notifications", notificationsRouter);
   app.use("/api/v1/me", meRouter);
+  app.use("/api/v1/verifier", verifierRouter);
 
   app.use(notFound);
   app.use(errorHandler);

@@ -76,6 +76,26 @@ async function assertBelowTarget(tx: Prisma.TransactionClient, a: { id: string; 
   }
 }
 
+/**
+ * Automatic assignment: the active verifier with the fewest pending entries
+ * (then fewest entries overall). Returns null when no verifier exists yet –
+ * such entries are picked up by the first verifier who opens the queue.
+ */
+export async function pickVerifier(tx: Prisma.TransactionClient, keep?: string | null): Promise<string | null> {
+  if (keep) {
+    const v = await tx.user.findUnique({ where: { id: keep }, select: { role: true, status: true } });
+    if (v?.role === "verifier" && v.status === "active") return keep;
+  }
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    select u.id from users u
+    where u.role = 'verifier' and u.status = 'active'
+    order by (select count(*) from entries e where e.verifier_id = u.id and e.status = 'pending'),
+             (select count(*) from entries e where e.verifier_id = u.id),
+             u.id
+    limit 1`;
+  return rows[0]?.id ?? null;
+}
+
 const lockAssignment = (tx: Prisma.TransactionClient, id: string) => tx.$executeRaw`select pg_advisory_xact_lock(hashtext(${"entry:asg:" + id}))`;
 
 const isUdiseConflict = (err: unknown) =>
@@ -96,9 +116,12 @@ export async function createEntry(req: Request, deoId: string, v: EntryInput) {
           insert into id_counters (key, value) values ('entry', 1)
           on conflict (key) do update set value = id_counters.value + 1
           returning value`;
+        const verifierId = await pickVerifier(tx);
         return tx.entry.create({
           data: {
             id: `ENT${String(value).padStart(6, "0")}`,
+            verifierId,
+            assignedAt: verifierId ? new Date() : null,
             assignmentId: a.id,
             deoId,
             state: a.state,
@@ -135,11 +158,23 @@ export async function updateEntry(req: Request, deoId: string, id: string, v: En
         const resubmit = e.status === "rejected";
         await assertUdiseFree(tx, v.udiseCode, deoId, e.id);
         if (resubmit) await assertBelowTarget(tx, e.assignment);
+        // A resubmitted entry goes back to the same verifier (if still active).
+        const verifierId = resubmit ? await pickVerifier(tx, e.verifierId) : e.verifierId;
         const updated = await tx.entry.update({
           where: { id },
           data: {
             ...schoolData(v),
-            ...(resubmit ? { status: "pending", verifiedAt: null, verifiedById: null, resubmitCount: { increment: 1 }, submittedAt: new Date() } : {}),
+            ...(resubmit
+              ? {
+                  status: "pending",
+                  verifiedAt: null,
+                  verifiedById: null,
+                  verifierId,
+                  assignedAt: verifierId !== e.verifierId ? new Date() : e.assignedAt,
+                  resubmitCount: { increment: 1 },
+                  submittedAt: new Date(),
+                }
+              : {}),
           },
         });
         return { entry: updated, resubmitted: resubmit };

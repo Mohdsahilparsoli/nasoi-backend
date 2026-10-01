@@ -50,6 +50,8 @@ model User {
   notifications       Notification[]
   entries             Entry[]        @relation("DeoEntries")
   entriesVerified     Entry[]        @relation("VerifiedEntries")
+  entriesToVerify     Entry[]        @relation("AssignedEntries")
+  verifications       Verification[]
 
   @@map("users")
 }
@@ -262,6 +264,8 @@ model Entry {
   ratePerEntry       Int         @map("rate_per_entry") // copied from the assignment when submitted
   status             EntryStatus @default(pending)
   rejectReason       String?     @map("reject_reason")
+  verifierId         String?     @map("verifier_id") // verifier this entry is assigned to (automatic)
+  assignedAt         DateTime?   @map("assigned_at") @db.Timestamptz(6)
   verifiedById       String?     @map("verified_by_id")
   verifiedAt         DateTime?   @map("verified_at") @db.Timestamptz(6)
   resubmitCount      Int         @default(0) @map("resubmit_count")
@@ -271,9 +275,48 @@ model Entry {
   assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   deo        User       @relation("DeoEntries", fields: [deoId], references: [id], onDelete: Cascade)
   verifiedBy User?      @relation("VerifiedEntries", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifier   User?      @relation("AssignedEntries", fields: [verifierId], references: [id], onDelete: SetNull)
 
+  verifications Verification[]
+
+  @@index([verifierId, status])
   @@index([deoId, submittedAt(sort: Desc)])
   @@index([assignmentId, status])
   @@index([status, submittedAt])
   @@map("entries")
+}
+
+enum VerificationDecision {
+  approved
+  rejected
+}
+
+/// One approve / reject action by a verifier. Verifier income = sum of `rate`.
+model Verification {
+  id         String               @id @default(uuid()) @db.Uuid
+  entryId    String               @map("entry_id")
+  verifierId String               @map("verifier_id")
+  deoId      String               @map("deo_id")
+  decision   VerificationDecision
+  reason     String?
+  rate       Int // ₹ paid to the verifier for this action (from settings at that time)
+  createdAt  DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  entry    Entry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  verifier User  @relation(fields: [verifierId], references: [id], onDelete: Cascade)
+
+  @@index([verifierId, createdAt(sort: Desc)])
+  @@index([entryId])
+  @@map("verifications")
+}
+
+/// Portal settings (single row, id = 1), changed by the Super Admin.
+model AppSetting {
+  id             Int      @id @default(1)
+  verifierRate   Int      @default(2) @map("verifier_rate") // ₹ per verified (approved or rejected) entry
+  defaultDeoRate Int      @default(10) @map("default_deo_rate") // ₹ per approved entry, default for new work
+  payoutWindow   String   @default("15th – 25th of every month") @map("payout_window")
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("app_settings")
 }
