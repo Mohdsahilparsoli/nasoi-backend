@@ -44,7 +44,7 @@ const call = (token: string, method: string, path: string, body?: unknown) =>
   fetch(base + "/api/v1" + path, { method, headers: { ...H, authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
 const tomorrow = () => new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
 const work = (over: Record<string, unknown> = {}) => ({
-  deoId: "DEO126", taskType: "Student Academic Record", target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
+  deoId: "DEO126", taskType: "Data Entry Services", target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
   block: "Mawana", village: "Kithore", pincode: PIN1, deadline: tomorrow(), instructions: "Cover all government schools.\nStart with Class 10.", ...over,
 });
 
@@ -87,7 +87,7 @@ describe("admin: operators and assignments", () => {
   test("validation", async () => {
     for (const [over, msg] of [
       [{ pincode: "12345" }, /PIN code/], [{ pincode: "012345" }, /PIN code/], [{ deadline: "2020-01-01" }, /past/],
-      [{ district: "Patna" }, /district/], [{ target: 0 }, /at least 1/], [{ taskType: "Other" }, /type of data entry/],
+      [{ district: "Patna" }, /district/], [{ target: 0 }, /at least 1/], [{ taskType: "Other" }, /Select the service/],
     ] as [Record<string, unknown>, RegExp][]) {
       const r = await call(admin, "POST", "/admin/assignments", work(over));
       assert.equal(r.status, 400, JSON.stringify(over));

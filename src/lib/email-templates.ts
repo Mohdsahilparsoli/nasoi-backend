@@ -191,7 +191,7 @@ export function assignmentEmail(a: {
       p("The NASOI admin has assigned new data-entry work to you. Please review the details and start after logging in."),
       detailsTable([
         ["Assignment ID", a.id],
-        ["Type of work", a.taskType],
+        ["Service", a.taskType],
         ["PIN code", a.pincode],
         ["Area", area],
         ["Target", `${a.target} entries`],
@@ -209,7 +209,7 @@ export function assignmentEmail(a: {
     "The NASOI admin has assigned new data-entry work to you.",
     "",
     `Assignment ID : ${a.id}`,
-    `Type of work  : ${a.taskType}`,
+    `Service       : ${a.taskType}`,
     `PIN code      : ${a.pincode}`,
     `Area          : ${area}`,
     `Target        : ${a.target} entries`,

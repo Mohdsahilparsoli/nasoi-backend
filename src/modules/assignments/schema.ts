@@ -1,8 +1,14 @@
 import { z } from "zod";
 import { STATE_DISTRICTS } from "../../lib/india-locations.js";
 
-/** Shared with the frontend (src/lib/constants.ts → TASK_TYPES). */
-export const TASK_TYPES = ["Student Academic Record", "School Survey Form", "Scholarship Application Data"] as const;
+/** NASOI services – the type of work in an assignment. */
+export const TASK_TYPES = [
+  "Student UHID Card Service",
+  "National Scholarship Eligibility Examination Test (NSEET)",
+  "Data Entry Services",
+  "Students Education Support Services",
+  "Academic Management Services",
+] as const;
 
 /** Today's date in India (YYYY-MM-DD). */
 export function todayIST() {
@@ -15,7 +21,7 @@ const text = (label: string, min: number, max: number) =>
 export const createAssignmentSchema = z
   .object({
     deoId: z.string().trim().min(1, "Select a Data Entry Operator").max(20).transform((v) => v.toUpperCase()),
-    taskType: z.enum(TASK_TYPES, { error: "Select the type of data entry" }),
+    taskType: z.enum(TASK_TYPES, { error: "Select the service" }),
     target: z.coerce.number({ error: "Enter the number of entries" }).int("Enter a whole number").min(1, "Target must be at least 1").max(100000, "Target is too large"),
     ratePerEntry: z.coerce.number({ error: "Enter the rate" }).int("Enter a whole number").min(1, "Rate must be at least ₹1").max(1000, "Rate is too high"),
     state: z.string().refine((s) => s in STATE_DISTRICTS, "Select a valid state / union territory"),
