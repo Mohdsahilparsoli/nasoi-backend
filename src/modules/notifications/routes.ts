@@ -30,5 +30,5 @@ notificationsRouter.post("/read", async (req, res) => {
 export const meRouter = Router();
 meRouter.use(noStore, requireAuth("deo"));
 meRouter.get("/assignments", async (req, res) => {
-  res.json(await myAssignments(req.auth!.sub));
+  res.json(await myAssignments(req.auth!.sub, req.query.seen === "1"));
 });

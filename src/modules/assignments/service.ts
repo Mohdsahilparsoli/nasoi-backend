@@ -145,12 +145,16 @@ export async function listAssignments(filter: { status?: string; deoId?: string;
   return rows.map(toPublicAssignment);
 }
 
-/** DEO view: the current (active) assignment and past ones. Opening it marks it as seen. */
-export async function myAssignments(deoId: string) {
+/**
+ * DEO view: the current (active) assignment and past ones.
+ * With markSeen (the Work Status page) the current assignment is marked as seen;
+ * the dashboard and sidebar badge only peek, so they can still show "New".
+ */
+export async function myAssignments(deoId: string, markSeen = false) {
   const db = prisma();
   const rows = await db.assignment.findMany({ where: { deoId }, orderBy: { createdAt: "desc" }, take: 100 });
   const current = rows.find((r) => r.status === "active") ?? null;
-  if (current && !current.seenAt) {
+  if (markSeen && current && !current.seenAt) {
     await db.assignment.update({ where: { id: current.id }, data: { seenAt: new Date() } });
     current.seenAt = new Date();
   }

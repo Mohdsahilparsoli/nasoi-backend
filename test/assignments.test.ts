@@ -116,8 +116,11 @@ describe("admin: operators and assignments", () => {
     assert.equal(n.notifications[0].link, "/deo/work");
   });
 
-  test("DEO sees the work; opening it marks it seen", async () => {
-    const r = await (await call(deo1, "GET", "/me/assignments")).json();
+  test("DEO sees the work; only the Work page (?seen=1) marks it seen", async () => {
+    const peek = await (await call(deo1, "GET", "/me/assignments")).json();
+    assert.equal(peek.current.id, first);
+    assert.equal(peek.current.seenAt, null);
+    const r = await (await call(deo1, "GET", "/me/assignments?seen=1")).json();
     assert.equal(r.current.id, first);
     assert.equal(r.current.target, 50);
     assert.ok(r.current.seenAt);
