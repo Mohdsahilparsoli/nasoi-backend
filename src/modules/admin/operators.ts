@@ -4,7 +4,7 @@ import type { Prisma } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
 import { HttpError } from "../../lib/http.js";
 import { notify } from "../../lib/notify.js";
-import { toPublicAssignment } from "../assignments/service.js";
+import { toPublicAssignment, withProgress } from "../assignments/service.js";
 
 /** GET /admin/operators – every registered DEO with location and work summary. */
 export async function listOperators(q?: string) {
@@ -71,7 +71,7 @@ export async function getOperator(id: string) {
       bank: { bankName: p.bankName, accountHolder: p.accountHolder, account: `XXXXXX${p.accountLast4}`, ifsc: p.ifsc, proofType: p.bankProofType },
     },
     documents: u.documents,
-    assignments: u.assignments.map(toPublicAssignment),
+    assignments: await withProgress(u.assignments.map(toPublicAssignment)),
     eligible: u.status === "active" && !u.assignments.some((a) => a.status === "active"),
   };
 }

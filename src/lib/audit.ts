@@ -19,7 +19,10 @@ export type AuditAction =
   | "assignment.completed"
   | "assignment.cancelled"
   | "user.blocked"
-  | "user.unblocked";
+  | "user.unblocked"
+  | "entry.created"
+  | "entry.updated"
+  | "entry.resubmitted";
 
 /** Append-only security log. Never stores passwords or tokens. */
 export async function audit(req: Request, action: AuditAction, userId: string | null, meta: Record<string, string | number | boolean> = {}) {

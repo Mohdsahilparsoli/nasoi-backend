@@ -48,6 +48,8 @@ model User {
   assignments         Assignment[]   @relation("DeoAssignments")
   assignmentsCreated  Assignment[]   @relation("AdminAssignments")
   notifications       Notification[]
+  entries             Entry[]        @relation("DeoEntries")
+  entriesVerified     Entry[]        @relation("VerifiedEntries")
 
   @@map("users")
 }
@@ -203,8 +205,9 @@ model Assignment {
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  deo        User @relation("DeoAssignments", fields: [deoId], references: [id], onDelete: Cascade)
-  assignedBy User @relation("AdminAssignments", fields: [assignedById], references: [id])
+  deo        User    @relation("DeoAssignments", fields: [deoId], references: [id], onDelete: Cascade)
+  assignedBy User    @relation("AdminAssignments", fields: [assignedById], references: [id])
+  entries    Entry[]
 
   @@index([deoId, status])
   @@index([pincode, status])
@@ -226,4 +229,51 @@ model Notification {
 
   @@index([userId, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+enum EntryStatus {
+  pending
+  approved
+  rejected
+}
+
+/// One school record entered by a DEO under an assignment.
+/// State, educational district and PIN code come from the assignment.
+model Entry {
+  id                 String      @id // ENT000001 …
+  assignmentId       String      @map("assignment_id")
+  deoId              String      @map("deo_id")
+  state              String
+  district           String // educational district
+  pincode            String      @db.VarChar(6)
+  udiseCode          String      @unique @map("udise_code") @db.VarChar(11)
+  schoolName         String      @map("school_name")
+  educationalBlock   String      @map("educational_block")
+  ruralUrban         String      @map("rural_urban") // Rural / Urban
+  cluster            String
+  lgdBlock           String      @map("lgd_block")
+  lgdPanchayat       String      @map("lgd_panchayat")
+  lgdVillage         String      @map("lgd_village")
+  schoolCategory     String      @map("school_category")
+  schoolManagement   String      @map("school_management")
+  yearEstablished    Int         @map("year_established")
+  yearRecognitionPri Int?        @map("year_recognition_pri")
+  schoolType         String      @map("school_type")
+  ratePerEntry       Int         @map("rate_per_entry") // copied from the assignment when submitted
+  status             EntryStatus @default(pending)
+  rejectReason       String?     @map("reject_reason")
+  verifiedById       String?     @map("verified_by_id")
+  verifiedAt         DateTime?   @map("verified_at") @db.Timestamptz(6)
+  resubmitCount      Int         @default(0) @map("resubmit_count")
+  submittedAt        DateTime    @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  deo        User       @relation("DeoEntries", fields: [deoId], references: [id], onDelete: Cascade)
+  verifiedBy User?      @relation("VerifiedEntries", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([deoId, submittedAt(sort: Desc)])
+  @@index([assignmentId, status])
+  @@index([status, submittedAt])
+  @@map("entries")
 }

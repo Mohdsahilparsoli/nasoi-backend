@@ -5,9 +5,18 @@ import { audit } from "../../lib/audit.js";
 import { HttpError } from "../../lib/http.js";
 import { assignmentEmail } from "../../lib/mailer.js";
 import { notify } from "../../lib/notify.js";
+import { progressFor } from "../entries/service.js";
 import type { CreateAssignmentInput } from "./schema.js";
 
 /** Public shape sent to the browser. */
+type Progress = { submitted: number; approved: number; rejected: number };
+
+/** Adds entry progress (submitted / approved / rejected) to each assignment. */
+export async function withProgress<T extends { id: string }>(list: T[]): Promise<(T & { progress: Progress })[]> {
+  const map = await progressFor(list.map((a) => a.id));
+  return list.map((a) => ({ ...a, progress: map.get(a.id)! }));
+}
+
 export function toPublicAssignment(a: Assignment & { deo?: { id: string; name: string; mobile: string | null } }) {
   return {
     id: a.id,
@@ -142,7 +151,7 @@ export async function listAssignments(filter: { status?: string; deoId?: string;
     take: 500,
     include: { deo: { select: { id: true, name: true, mobile: true } } },
   });
-  return rows.map(toPublicAssignment);
+  return withProgress(rows.map(toPublicAssignment));
 }
 
 /**
@@ -158,8 +167,9 @@ export async function myAssignments(deoId: string, markSeen = false) {
     await db.assignment.update({ where: { id: current.id }, data: { seenAt: new Date() } });
     current.seenAt = new Date();
   }
+  const all = await withProgress(rows.map(toPublicAssignment));
   return {
-    current: current ? toPublicAssignment(current) : null,
-    history: rows.filter((r) => r.status !== "active").map(toPublicAssignment),
+    current: current ? all.find((a) => a.id === current.id)! : null,
+    history: all.filter((a) => a.status !== "active"),
   };
 }
