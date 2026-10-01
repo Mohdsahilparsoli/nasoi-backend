@@ -5,6 +5,7 @@ import { Prisma, type DocumentKind, type Role } from "../../generated/prisma/cli
 import { audit } from "../../lib/audit.js";
 import { encryptText, lookupHash } from "../../lib/crypto.js";
 import { HttpError } from "../../lib/http.js";
+import { mailEnabled, registrationEmail, sendMail } from "../../lib/mailer.js";
 import { BCRYPT_COST } from "../auth/service.js";
 import type { RegistrationInput } from "./schema.js";
 import { sha256 } from "./uploads.js";
@@ -106,7 +107,7 @@ export async function register(req: Request, v: RegistrationInput) {
             },
           },
         },
-        select: { id: true, role: true, name: true, mobile: true, email: true },
+        select: { id: true, role: true, name: true, mobile: true, email: true, createdAt: true },
       });
 
       // Attach uploads atomically; a concurrent submit with the same files fails here.
@@ -119,7 +120,9 @@ export async function register(req: Request, v: RegistrationInput) {
     });
 
     await audit(req, "user.registered", user.id, { role: user.role });
-    return user;
+    const emailSent = await sendRegistrationEmail(user);
+    const { createdAt: _c, ...pub } = user;
+    return { user: pub, emailSent };
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       const target = JSON.stringify(err.meta ?? {});
@@ -129,5 +132,18 @@ export async function register(req: Request, v: RegistrationInput) {
       throw duplicate("These details are already registered.", "record");
     }
     throw err;
+  }
+}
+
+/** Confirmation e-mail. A mail problem never undoes or fails the registration. */
+async function sendRegistrationEmail(u: { id: string; role: Role; name: string; email: string | null; mobile: string | null; createdAt: Date }) {
+  if (!mailEnabled() || !u.email || (u.role !== "deo" && u.role !== "verifier")) return false;
+  try {
+    const mail = registrationEmail({ id: u.id, name: u.name, role: u.role, email: u.email, mobile: u.mobile ?? "", createdAt: u.createdAt });
+    await sendMail({ to: u.email, ...mail });
+    return true;
+  } catch (err) {
+    console.error("[mail] registration e-mail failed", u.id, (err as Error).message);
+    return false;
   }
 }

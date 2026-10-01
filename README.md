@@ -20,7 +20,7 @@ Modules done: **Login / Auth** and **Registration** (DEO & Verifier, with docume
 | POST | `/api/v1/auth/forgot-password` | – | `{ email }` → e-mails a reset link (JWT, 30 min, single-use). Same answer whether the e-mail exists or not |
 | POST | `/api/v1/auth/reset-password` | – | `{ token, newPassword }` → sets the password, logs out all devices |
 | POST | `/api/v1/registrations/uploads` | – | multipart `kind` + `file` (PDF/JPG/PNG ≤ 2 MB, type checked from file bytes) → `{ upload: { id, token } }` |
-| POST | `/api/v1/registrations` | – | Full registration form + upload refs + password → `{ user }` (role `deo` → `DEO1001…`, `verifier` → `VR201…`) |
+| POST | `/api/v1/registrations` | – | Full registration form + upload refs + password → `{ user, emailSent }` and a confirmation e-mail with the ID (never the password or Aadhaar) (role `deo` → `DEO1001…`, `verifier` → `VR201…`) |
 | GET  | `/api/v1/profile/me` | Bearer | Own profile (Aadhaar / account masked) and document list |
 | PATCH | `/api/v1/profile/me/contact` | Bearer | Mobile, alternate mobile, email, address |
 | PATCH | `/api/v1/profile/me/bank` | Bearer | Bank details |

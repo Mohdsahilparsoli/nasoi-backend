@@ -63,6 +63,6 @@ registrationRouter.post("/uploads", limiter(() => config().UPLOADS_PER_HOUR, 60,
  */
 registrationRouter.post("/", limiter(() => config().REGISTRATIONS_PER_HOUR, 60, "Too many registration attempts. Please try again after some time."), async (req, res) => {
   const input = registrationSchema.parse(req.body);
-  const user = await register(req, input);
-  res.status(201).json({ user, message: "Registration successful." });
+  const { user, emailSent } = await register(req, input);
+  res.status(201).json({ user, emailSent, message: "Registration successful." });
 });
