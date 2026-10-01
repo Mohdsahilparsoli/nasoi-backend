@@ -108,7 +108,8 @@ export const registrationSchema = z
       .refine((v) => v === undefined || RX.pan.test(v), "Enter a valid PAN (e.g. ABCDE1234F)"),
     bankProofType: oneOf("bank document type", BANK_PROOF_TYPES),
     documents: z.object({
-      aadhaar: docRef,
+      aadhaar_front: docRef,
+      aadhaar_back: docRef,
       pan: docRef.optional(),
       bank_proof: docRef,
       photo: docRef,

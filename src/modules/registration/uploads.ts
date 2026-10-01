@@ -5,13 +5,16 @@ import type { DocumentKind } from "../../generated/prisma/client.js";
 import { encryptBytes } from "../../lib/crypto.js";
 import { HttpError, clientIp } from "../../lib/http.js";
 
-export const DOCUMENT_KINDS = ["aadhaar", "pan", "bank_proof", "photo", "signature"] as const satisfies readonly DocumentKind[];
+/** Kinds that can be uploaded now ("aadhaar" single-file is kept only for older registrations). */
+export const DOCUMENT_KINDS = ["aadhaar_front", "aadhaar_back", "pan", "bank_proof", "photo", "signature"] as const satisfies readonly DocumentKind[];
 
 export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2 MB after client-side compression
 
 /** Photo / signature must be images; ID documents may also be PDF. */
 const ALLOWED: Record<DocumentKind, readonly ("jpg" | "png" | "pdf")[]> = {
   aadhaar: ["jpg", "png", "pdf"],
+  aadhaar_front: ["jpg", "png"],
+  aadhaar_back: ["jpg", "png"],
   pan: ["jpg", "png", "pdf"],
   bank_proof: ["jpg", "png", "pdf"],
   photo: ["jpg", "png"],

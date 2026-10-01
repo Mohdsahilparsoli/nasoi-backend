@@ -65,7 +65,8 @@ const rnd = () => String(Math.floor(10000000 + Math.random() * 89999999));
 
 async function docs(withPan = false) {
   return {
-    aadhaar: await up("aadhaar", pdf(), "aadhaar.pdf"),
+    aadhaar_front: await up("aadhaar_front", jpg(), "aadhaar-front.jpg"),
+    aadhaar_back: await up("aadhaar_back", png(), "aadhaar-back.png"),
     ...(withPan ? { pan: await up("pan", jpg(), "pan.jpg") } : {}),
     bank_proof: await up("bank_proof", png(), "passbook.png"),
     photo: await up("photo", jpg(), "photo.jpg"),
@@ -94,7 +95,7 @@ const login = (loginId: string, password: string) =>
 
 describe("uploads", () => {
   test("accepts PDF / JPG / PNG and returns an id + token", async () => {
-    for (const [kind, buf, name] of [["aadhaar", pdf(), "a.pdf"], ["photo", jpg(), "p.jpg"], ["signature", png(), "s.png"]] as const) {
+    for (const [kind, buf, name] of [["aadhaar_front", jpg(), "af.jpg"], ["aadhaar_back", png(), "ab.png"], ["bank_proof", pdf(), "b.pdf"], ["photo", jpg(), "p.jpg"], ["signature", png(), "s.png"]] as const) {
       const r = await uploadFile(kind, buf, name);
       assert.equal(r.status, 201);
       const { upload } = await r.json();
@@ -104,14 +105,16 @@ describe("uploads", () => {
   });
 
   test("checks the real file type, not the name", async () => {
-    assert.equal((await uploadFile("aadhaar", Buffer.from("MZ fake exe"), "aadhaar.pdf")).status, 415);
+    assert.equal((await uploadFile("bank_proof", Buffer.from("MZ fake exe"), "passbook.pdf")).status, 415);
+    assert.equal((await uploadFile("aadhaar_front", pdf(), "front.pdf")).status, 415, "Aadhaar front must be a photo");
+    assert.equal((await uploadFile("aadhaar", pdf(), "old.pdf")).status, 400, "single-file Aadhaar no longer accepted");
     assert.equal((await uploadFile("photo", pdf(), "photo.jpg")).status, 415, "photo must be an image");
     assert.equal((await uploadFile("unknown", pdf(), "x.pdf")).status, 400);
   });
 
   test("rejects files over 2 MB and requests without the client header", async () => {
     const big = Buffer.concat([Buffer.from("%PDF-"), Buffer.alloc(2 * 1024 * 1024 + 10)]);
-    assert.equal((await uploadFile("aadhaar", big, "big.pdf")).status, 413);
+    assert.equal((await uploadFile("bank_proof", big, "big.pdf")).status, 413);
     const fd = new FormData();
     fd.append("kind", "photo");
     fd.append("file", new Blob([new Uint8Array(jpg())]), "p.jpg");
@@ -119,7 +122,7 @@ describe("uploads", () => {
   });
 
   test("stores files encrypted", async () => {
-    const { id } = await up("aadhaar", pdf(), "enc.pdf");
+    const { id } = await up("bank_proof", pdf(), "enc.pdf");
     const d = await prisma().document.findUniqueOrThrow({ where: { id } });
     assert.ok(!Buffer.from(d.data).includes(Buffer.from("%PDF")));
   });
@@ -164,7 +167,7 @@ describe("registration", () => {
     assert.ok(!row.includes(deo.aadhaar), "Aadhaar must not be stored in clear");
     assert.equal(p.aadhaarLast4, deo.aadhaar.slice(-4));
     const docCount = await prisma().document.count({ where: { userId: deo.id } });
-    assert.equal(docCount, 4);
+    assert.equal(docCount, 5);
   });
 
   test("duplicate mobile, email and Aadhaar are refused", async () => {
@@ -217,14 +220,15 @@ describe("registration", () => {
     assert.equal(user.profile.aadhaar, `XXXX XXXX ${deo.aadhaar.slice(-4)}`);
     assert.match(user.profile.bank.account, /^XXXXXX\d{4}$/);
     assert.equal(user.profile.district, "Meerut");
-    assert.equal(user.documents.length, 4);
+    assert.equal(user.documents.length, 5);
+    assert.deepEqual(user.documents.map((d: { kind: string }) => d.kind).sort(), ["aadhaar_back", "aadhaar_front", "bank_proof", "photo", "signature"]);
 
     // owner can open a document; it comes back decrypted with the right type
-    const photo = user.documents.find((d: { kind: string }) => d.kind === "aadhaar");
+    const photo = user.documents.find((d: { kind: string }) => d.kind === "bank_proof");
     const f = await fetch(base + `/api/v1/documents/${photo.id}`, { headers: auth });
     assert.equal(f.status, 200);
-    assert.equal(f.headers.get("content-type"), "application/pdf");
-    assert.ok(Buffer.from(await f.arrayBuffer()).subarray(0, 5).toString() === "%PDF-");
+    assert.equal(f.headers.get("content-type"), "image/png");
+    assert.ok(Buffer.from(await f.arrayBuffer()).subarray(1, 4).toString() === "PNG", "decrypted file is the original PNG");
 
     // another DEO cannot; a verifier can
     const other = (await (await login("DEO127", "Abcd@2026")).json()).accessToken;

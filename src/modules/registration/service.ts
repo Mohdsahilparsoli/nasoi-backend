@@ -19,6 +19,8 @@ const ID_FORMAT: Record<"deo" | "verifier", { key: string; prefix: string; start
 
 const DOC_LABEL: Record<DocumentKind, string> = {
   aadhaar: "Aadhaar card",
+  aadhaar_front: "Aadhaar card (front)",
+  aadhaar_back: "Aadhaar card (back)",
   pan: "PAN card",
   bank_proof: "Bank passbook / cancelled cheque",
   photo: "Photo",

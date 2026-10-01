@@ -88,7 +88,9 @@ model AuditLog {
 }
 
 enum DocumentKind {
-  aadhaar
+  aadhaar // older registrations: front and back in one file
+  aadhaar_front
+  aadhaar_back
   pan
   bank_proof
   photo
