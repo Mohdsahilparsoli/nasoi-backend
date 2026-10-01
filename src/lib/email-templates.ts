@@ -173,3 +173,53 @@ export function resetPasswordEmail(name: string, link: string, minutes: number) 
   ].join("\n");
   return { subject, html, text };
 }
+
+/** Sent to a DEO when work is assigned. */
+export function assignmentEmail(a: {
+  id: string; deoName: string; taskType: string; target: number; ratePerEntry: number;
+  village: string; block: string; district: string; state: string; pincode: string; deadline: Date; instructions?: string | null;
+}) {
+  const link = `${appUrl()}/deo/work`;
+  const deadline = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(a.deadline);
+  const area = `${a.village}, ${a.block}, ${a.district}, ${a.state} – ${a.pincode}`;
+  const subject = `New work assigned – ${a.id} (PIN ${a.pincode})`;
+  const html = layout({
+    preheader: `${a.taskType} for PIN ${a.pincode}, target ${a.target} entries, deadline ${deadline}.`,
+    title: "New work assigned to you",
+    body: [
+      p(`Dear <b>${esc(a.deoName)}</b>,`),
+      p("The NASOI admin has assigned new data-entry work to you. Please review the details and start after logging in."),
+      detailsTable([
+        ["Assignment ID", a.id],
+        ["Type of work", a.taskType],
+        ["PIN code", a.pincode],
+        ["Area", area],
+        ["Target", `${a.target} entries`],
+        ["Rate", `₹${a.ratePerEntry} per approved entry`],
+        ["Deadline", deadline],
+      ]),
+      a.instructions ? `<p style="margin:0 0 6px;font-weight:bold">Instructions</p>${p(esc(a.instructions).replace(/\n/g, "<br>"))}` : "",
+      button("Open My Work", link),
+      small("You will be eligible for your next assignment after this one is completed."),
+    ].join("\n"),
+  });
+  const text = [
+    `Dear ${a.deoName},`,
+    "",
+    "The NASOI admin has assigned new data-entry work to you.",
+    "",
+    `Assignment ID : ${a.id}`,
+    `Type of work  : ${a.taskType}`,
+    `PIN code      : ${a.pincode}`,
+    `Area          : ${area}`,
+    `Target        : ${a.target} entries`,
+    `Rate          : Rs ${a.ratePerEntry} per approved entry`,
+    `Deadline      : ${deadline}`,
+    ...(a.instructions ? ["", "Instructions:", a.instructions] : []),
+    "",
+    `Open My Work: ${link}`,
+    "",
+    "This is an automated e-mail – please do not reply.",
+  ].join("\n");
+  return { subject, html, text };
+}

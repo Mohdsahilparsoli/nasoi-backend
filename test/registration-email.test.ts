@@ -38,6 +38,7 @@ let server: ReturnType<ReturnType<typeof createApp>["listen"]>;
 const H = { "x-nasoi-client": "web" };
 
 before(async () => {
+  await (await import("./fixtures.js")).ensureFixtures();
   await new Promise<void>((r) => smtp.listen(2589, "127.0.0.1", r));
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));

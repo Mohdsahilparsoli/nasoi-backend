@@ -17,6 +17,7 @@ let server: ReturnType<ReturnType<typeof createApp>["listen"]>;
 const H = { "content-type": "application/json", "x-nasoi-client": "web" };
 
 before(async () => {
+  await (await import("./fixtures.js")).ensureFixtures();
   await query("update users set status = 'active', failed_login_count = 0, locked_until = null");
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));

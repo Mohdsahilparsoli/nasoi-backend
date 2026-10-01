@@ -19,6 +19,7 @@ const H = { "x-nasoi-client": "web" };
 const JSONH = { ...H, "content-type": "application/json" };
 
 before(async () => {
+  await (await import("./fixtures.js")).ensureFixtures();
   await prisma().user.deleteMany({ where: { email: { endsWith: "@test.nasoi.in" } } });
   await prisma().document.deleteMany({ where: { userId: null } });
   server = createApp().listen(0);

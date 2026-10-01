@@ -37,6 +37,7 @@ const H = { "content-type": "application/json", "x-nasoi-client": "web" };
 const EMAIL = "priya.demo@example.com"; // DEO127
 
 before(async () => {
+  await (await import("./fixtures.js")).ensureFixtures();
   await new Promise<void>((r) => smtp.listen(2587, "127.0.0.1", r));
   await prisma().user.update({ where: { id: "DEO127" }, data: { passwordHash: await bcrypt.hash("Abcd@2026", 12), status: "active", failedLoginCount: 0, lockedUntil: null } });
   server = createApp().listen(0);

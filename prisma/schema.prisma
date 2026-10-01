@@ -45,6 +45,10 @@ model User {
   profile   Profile?
   documents Document[]
 
+  assignments         Assignment[]   @relation("DeoAssignments")
+  assignmentsCreated  Assignment[]   @relation("AdminAssignments")
+  notifications       Notification[]
+
   @@map("users")
 }
 
@@ -165,4 +169,61 @@ model IdCounter {
   value Int
 
   @@map("id_counters")
+}
+
+enum AssignmentStatus {
+  active
+  completed
+  cancelled
+}
+
+/// Work given to a Data Entry Operator for one PIN code area.
+/// Rules (enforced in the API with row locks):
+///  - a DEO can have only ONE active assignment at a time;
+///  - a PIN code can have only ONE active assignment at a time.
+/// The ID carries the PIN code, e.g. ASG-250401-001.
+model Assignment {
+  id           String           @id
+  deoId        String           @map("deo_id")
+  assignedById String           @map("assigned_by_id")
+  taskType     String           @map("task_type")
+  target       Int
+  ratePerEntry Int              @map("rate_per_entry") // rupees per approved entry
+  state        String
+  district     String
+  block        String
+  village      String
+  pincode      String           @db.VarChar(6)
+  deadline     DateTime         @db.Date
+  instructions String?
+  status       AssignmentStatus @default(active)
+  seenAt       DateTime?        @map("seen_at") @db.Timestamptz(6)
+  completedAt  DateTime?        @map("completed_at") @db.Timestamptz(6)
+  cancelledAt  DateTime?        @map("cancelled_at") @db.Timestamptz(6)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  deo        User @relation("DeoAssignments", fields: [deoId], references: [id], onDelete: Cascade)
+  assignedBy User @relation("AdminAssignments", fields: [assignedById], references: [id])
+
+  @@index([deoId, status])
+  @@index([pincode, status])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("assignments")
+}
+
+/// In-app notification (bell icon).
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id")
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("notifications")
 }

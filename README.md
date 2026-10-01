@@ -5,7 +5,7 @@ It is deployed to Vercel as a separate project from the Next.js frontend.
 
 **Live API:** `https://nasoi-api.vercel.app` (the default everywhere for now; it will move to `https://api.nasoi.com` later).
 
-Modules done: **Login / Auth** and **Registration** (DEO & Verifier, with documents and profile). The other modules (registration, assignments, entries, verification, payouts) will be added one by one.
+Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents and profile), **Assign work** (admin) with notifications. The other modules (registration, assignments, entries, verification, payouts) will be added one by one.
 
 ## Endpoints (v1)
 
@@ -25,6 +25,13 @@ Modules done: **Login / Auth** and **Registration** (DEO & Verifier, with docume
 | PATCH | `/api/v1/profile/me/contact` | Bearer | Mobile, alternate mobile, email, address |
 | PATCH | `/api/v1/profile/me/bank` | Bearer | Bank details |
 | GET  | `/api/v1/documents/:id` | Bearer | View a document (owner, verifier or admin) |
+| GET  | `/api/v1/admin/operators?q=` | Admin | All DEOs with location, current work and eligibility |
+| GET  | `/api/v1/admin/operators/:id` | Admin | Full profile (masked), documents, assignments |
+| PATCH | `/api/v1/admin/operators/:id/status` | Admin | `{ status: "active" \| "blocked" }` (blocking logs the DEO out) |
+| GET / POST | `/api/v1/admin/assignments` | Admin | List / assign work. Rules: one active assignment per DEO and per PIN code; ID `ASG-<PIN>-001` |
+| PATCH | `/api/v1/admin/assignments/:id` | Admin | `{ status: "completed" \| "cancelled" }` |
+| GET  | `/api/v1/me/assignments` | DEO | `{ current, history }` |
+| GET  | `/api/v1/notifications` / POST `/notifications/read` | Bearer | In-app notifications (bell) |
 
 All `POST` requests must send the header `X-NASOI-Client: web`.
 

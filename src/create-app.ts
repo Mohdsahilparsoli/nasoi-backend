@@ -8,6 +8,8 @@ import { CLIENT_HEADER, csrfGuard, securityHeaders } from "./middleware/security
 import { authRouter } from "./modules/auth/routes.js";
 import { documentsRouter, profileRouter } from "./modules/profile/routes.js";
 import { registrationRouter } from "./modules/registration/routes.js";
+import { adminRouter } from "./modules/admin/routes.js";
+import { meRouter, notificationsRouter } from "./modules/notifications/routes.js";
 
 export function createApp() {
   const c = config();
@@ -48,6 +50,9 @@ export function createApp() {
   app.use("/api/v1/registrations", registrationRouter);
   app.use("/api/v1/profile", profileRouter);
   app.use("/api/v1/documents", documentsRouter);
+  app.use("/api/v1/admin", adminRouter);
+  app.use("/api/v1/notifications", notificationsRouter);
+  app.use("/api/v1/me", meRouter);
 
   app.use(notFound);
   app.use(errorHandler);
