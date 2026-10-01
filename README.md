@@ -40,6 +40,11 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | POST | `/api/v1/verifier/entries/:id/decision` | Verifier | `{ decision: "approved" \| "rejected", reason }` – reason required to reject; the DEO is notified |
 | GET  | `/api/v1/verifier/history?decision=` | Verifier | My approve / reject history |
 | GET / PATCH | `/api/v1/admin/settings` | Admin | Verifier rate, default DEO rate, payout window |
+| GET  | `/api/v1/admin/entries?status=&pincode=&deoId=&verifierId=&assignmentId=&taskType=&state=&district=&from=&to=&q=` | Admin | All entries (with rates) |
+| GET  | `/api/v1/admin/entries/export-options` | Admin | PIN codes, DEOs, verifiers, assignments, districts, services that have approved entries |
+| GET  | `/api/v1/admin/entries/export?format=xlsx\|csv&<same filters>` | Admin | Download **approved** entries as Excel or CSV. No filter = export all. `from`/`to` = approved between (IST) |
+
+**Rates are private:** DEOs and verifiers only see their total earnings / income. The per-entry rates (DEO rate per assignment, verifier rate in settings) are set and seen only by the Super Admin – they are never sent to DEO or verifier APIs or e-mails.
 
 **Verifier assignment:** each new entry goes automatically to the active verifier with the fewest pending entries; a resubmitted entry goes back to the same verifier. Entries submitted while no verifier existed are picked up by the first verifier who opens the portal.
 

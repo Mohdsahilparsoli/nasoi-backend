@@ -78,7 +78,7 @@ describe("DEO school entries", () => {
     assert.match(entry.id, /^ENT\d{6}$/);
     assert.equal(entry.assignmentId, asgId);
     assert.deepEqual(entry.area, { state: "Uttar Pradesh", district: "Meerut", pincode: PIN });
-    assert.equal(entry.ratePerEntry, 12);
+    assert.equal(entry.ratePerEntry, undefined, "DEO must not see the per-entry rate");
     assert.equal(entry.status, "pending");
     assert.equal(entry.school.schoolName, "Govt. Primary School Kithore");
     assert.equal(entry.school.yearRecognitionPri, null);
@@ -134,7 +134,9 @@ describe("DEO school entries", () => {
     assert.equal(s.totals.approved, 1);
     assert.equal(s.totals.pending, 1);
     assert.equal(s.totals.earnings, 12);
-    assert.equal(s.totals.pendingValue, 12);
+    assert.equal(s.totals.pendingValue, undefined);
+    const work = await (await call(deo, "GET", "/me/assignments")).json();
+    assert.equal(work.current.ratePerEntry, undefined, "DEO must not see the rate of the work");
     assert.equal(s.monthly.length, 1);
     assert.deepEqual(s.currentProgress, { assignmentId: asgId, target: 2, submitted: 2, approved: 1, pending: 1, rejected: 0 });
     const { assignments } = await (await call(admin, "GET", `/admin/assignments?deoId=${DEO}`)).json();

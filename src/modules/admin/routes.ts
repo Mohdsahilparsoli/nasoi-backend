@@ -5,6 +5,7 @@ import { createAssignmentSchema, updateAssignmentSchema } from "../assignments/s
 import { createAssignment, listAssignments, updateAssignmentStatus } from "../assignments/service.js";
 import { audit } from "../../lib/audit.js";
 import { getSettings, settingsSchema, updateSettings } from "../../lib/settings.js";
+import { exportApproved, exportOptions, listAdminEntries, parseFilter } from "./entries.js";
 import { getOperator, listOperators, setOperatorStatus } from "./operators.js";
 
 /** Everything under /api/v1/admin requires a Super Admin login. */
@@ -50,4 +51,23 @@ adminRouter.patch("/settings", async (req, res) => {
   const settings = await updateSettings(settingsSchema.parse(req.body));
   await audit(req, "settings.updated", req.auth!.sub, { verifierRate: settings.verifierRate, defaultDeoRate: settings.defaultDeoRate });
   res.json({ settings });
+});
+
+/* ---------- Entries: list and export ---------- */
+
+/** GET /admin/entries?status=&pincode=&deoId=&verifierId=&assignmentId=&taskType=&state=&district=&from=&to=&q= */
+adminRouter.get("/entries", async (req, res) => {
+  res.json(await listAdminEntries(parseFilter(req.query as Record<string, unknown>)));
+});
+
+/** GET /admin/entries/export-options – PIN codes, DEOs, verifiers … that have approved entries. */
+adminRouter.get("/entries/export-options", async (_req, res) => {
+  res.json(await exportOptions());
+});
+
+/** GET /admin/entries/export?format=xlsx|csv&<filters> – approved entries only. No filters = export all. */
+adminRouter.get("/entries/export", async (req, res) => {
+  const format = req.query.format === "csv" ? "csv" : "xlsx";
+  const { format: _f, ...rest } = req.query as Record<string, unknown>;
+  await exportApproved(req, res, req.auth!.sub, parseFilter(rest), format);
 });

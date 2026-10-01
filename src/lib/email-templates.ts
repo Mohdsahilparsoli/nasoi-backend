@@ -176,7 +176,7 @@ export function resetPasswordEmail(name: string, link: string, minutes: number) 
 
 /** Sent to a DEO when work is assigned. */
 export function assignmentEmail(a: {
-  id: string; deoName: string; taskType: string; target: number; ratePerEntry: number;
+  id: string; deoName: string; taskType: string; target: number;
   village: string; block: string; district: string; state: string; pincode: string; deadline: Date; instructions?: string | null;
 }) {
   const link = `${appUrl()}/deo/work`;
@@ -195,7 +195,6 @@ export function assignmentEmail(a: {
         ["PIN code", a.pincode],
         ["Area", area],
         ["Target", `${a.target} entries`],
-        ["Rate", `₹${a.ratePerEntry} per approved entry`],
         ["Deadline", deadline],
       ]),
       a.instructions ? `<p style="margin:0 0 6px;font-weight:bold">Instructions</p>${p(esc(a.instructions).replace(/\n/g, "<br>"))}` : "",
@@ -213,7 +212,6 @@ export function assignmentEmail(a: {
     `PIN code      : ${a.pincode}`,
     `Area          : ${area}`,
     `Target        : ${a.target} entries`,
-    `Rate          : Rs ${a.ratePerEntry} per approved entry`,
     `Deadline      : ${deadline}`,
     ...(a.instructions ? ["", "Instructions:", a.instructions] : []),
     "",

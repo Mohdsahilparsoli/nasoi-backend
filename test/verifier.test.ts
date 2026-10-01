@@ -22,6 +22,7 @@ const login = async (loginId: string, password: string) =>
   (await (await fetch(base + "/api/v1/auth/login", { method: "POST", headers: H, body: JSON.stringify({ loginId, password }) })).json()).accessToken as string;
 const call = (token: string, method: string, path: string, body?: unknown) =>
   fetch(base + "/api/v1" + path, { method, headers: { ...H, authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
+const raw = (token: string, path: string) => fetch(base + "/api/v1" + path, { headers: { ...H, authorization: `Bearer ${token}` } });
 const school = (over: Record<string, unknown> = {}) => ({
   udiseCode: udise(), schoolName: "GPS Test", educationalBlock: "Mawana", ruralUrban: "Rural", cluster: "Kithore", lgdBlock: "Mawana",
   lgdPanchayat: "Kithore", lgdVillage: "Kithore", schoolCategory: "Primary only (1-5)", schoolManagement: "Department of Education",
@@ -34,7 +35,8 @@ before(async () => {
   await (await import("./fixtures.js")).ensureFixtures();
   await prisma().assignment.deleteMany({ where: { deoId: DEO } });
   await prisma().verification.deleteMany({ where: { verifierId: "VR101" } });
-  await prisma().entry.updateMany({ where: { verifierId: "VR101" }, data: { verifierId: null, status: "approved" } });
+  // VR101 starts empty: hand its old entries and any unassigned pending entries to VR102.
+  await prisma().entry.updateMany({ where: { OR: [{ verifierId: "VR101" }, { verifierId: null, status: "pending" }] }, data: { verifierId: "VR102" } });
   await prisma().notification.deleteMany({ where: { userId: DEO } });
   await prisma().appSetting.upsert({ where: { id: 1 }, create: { id: 1 }, update: { verifierRate: 2 } });
   server = createApp().listen(0);
@@ -81,11 +83,12 @@ describe("verifier", () => {
     assert.equal(s.totalAssigned, 3);
     assert.equal(s.pending, 3);
     assert.equal(s.approved + s.rejected + s.income, 0);
-    assert.equal(s.rate, 2);
+    assert.equal(s.rate, undefined, "verifier must not see the per-entry rate");
     const { entries } = await (await call(vr, "GET", "/verifier/entries")).json();
     assert.deepEqual(entries.map((e: { id: string }) => e.id), ids); // oldest first
     assert.equal(entries[0].deo.id, DEO);
     assert.equal(entries[0].assignment.taskType, "Data Entry Services");
+    assert.equal(entries[0].ratePerEntry, undefined, "verifier must not see the DEO rate");
   });
 
   test("reject needs a reason; DEO is notified", async () => {
@@ -136,11 +139,10 @@ describe("verifier", () => {
     assert.equal((await call(vr, "POST", `/verifier/entries/${ids[2]}/decision`, { decision: "approved" })).status, 200);
     s = await summary();
     assert.equal(s.income, 7);
-    assert.equal(s.rate, 3);
     const h = await (await call(vr, "GET", "/verifier/history?decision=approved")).json();
     assert.equal(h.history.length, 2);
     assert.equal(h.history[0].entry.id, ids[2]);
-    assert.equal(h.history[0].rate, 3);
+    assert.equal(h.history[0].rate, undefined);
     await call(admin, "PATCH", "/admin/settings", { verifierRate: 2, defaultDeoRate: 10, payoutWindow: "15th – 25th of every month" });
   });
 
@@ -150,5 +152,50 @@ describe("verifier", () => {
     await prisma().entry.update({ where: { id }, data: { verifierId: null } });
     const { entries } = await (await call(vr, "GET", "/verifier/entries?view=all")).json();
     assert.ok(entries.some((e: { id: string }) => e.id === id));
+  });
+
+  test("admin export: approved only, filters, CSV + Excel, formula-safe", async () => {
+    // One more approved entry whose name starts with "=" (must not become a formula).
+    const r = await call(deo, "POST", "/me/entries", school({ schoolName: "=HYPERLINK(1)" }));
+    const id = (await r.json()).entry.id;
+    await prisma().entry.update({ where: { id }, data: { verifierId: "VR101" } });
+    assert.equal((await call(vr, "POST", `/verifier/entries/${id}/decision`, { decision: "approved" })).status, 200);
+    const approved = await prisma().entry.count({ where: { deoId: DEO, status: "approved" } });
+
+    assert.equal((await raw(vr, `/admin/entries/export?deoId=${DEO}`)).status, 403);
+    assert.equal((await raw(admin, "/admin/entries/export?pincode=12")).status, 400);
+
+    const csv = await raw(admin, `/admin/entries/export?format=csv&deoId=${DEO}`);
+    assert.equal(csv.status, 200);
+    assert.match(csv.headers.get("content-disposition") ?? "", /nasoi-approved-entries_deo129_.*\.csv/);
+    const bytes = Buffer.from(await csv.arrayBuffer());
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "UTF-8 BOM for Excel");
+    const text = bytes.subarray(3).toString("utf8");
+    const lines = text.trim().split("\r\n");
+    assert.ok(lines[0].startsWith("S.No,Entry ID,Assignment ID,Service"));
+    assert.equal(lines.length - 1, approved, "only approved entries");
+    assert.ok(text.includes("'=HYPERLINK(1)"), "formula is neutralised");
+
+    const pinCsv = await (await raw(admin, `/admin/entries/export?format=csv&pincode=${PIN}&verifierId=VR101`)).text();
+    assert.equal(pinCsv.trim().split("\r\n").length - 1, approved);
+    const none = await (await raw(admin, `/admin/entries/export?format=csv&deoId=${DEO}&from=2099-01-01`)).text();
+    assert.equal(none.trim().split("\r\n").length, 1, "date filter: header only");
+
+    const x = await raw(admin, `/admin/entries/export?deoId=${DEO}`);
+    assert.equal(x.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(Buffer.from(await x.arrayBuffer()) as never);
+    const ws = wb.getWorksheet("Approved Entries")!;
+    assert.equal(ws.rowCount - 1, approved);
+    assert.equal(ws.getRow(1).getCell(8).value, "UDISE Code");
+    assert.equal(typeof ws.getRow(2).getCell(8).value, "string", "UDISE kept as text");
+
+    const opts = await (await call(admin, "GET", "/admin/entries/export-options")).json();
+    assert.ok(opts.pincodes.some((p: { value: string }) => p.value === PIN));
+    assert.ok(opts.deos.some((d: { value: string }) => d.value === DEO));
+    const list = await (await call(admin, "GET", `/admin/entries?deoId=${DEO}&status=approved`)).json();
+    assert.equal(list.total, approved);
+    assert.equal(typeof list.entries[0].ratePerEntry, "number", "admin sees rates");
   });
 });

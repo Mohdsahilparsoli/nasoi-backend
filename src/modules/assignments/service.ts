@@ -167,7 +167,11 @@ export async function myAssignments(deoId: string, markSeen = false) {
     await db.assignment.update({ where: { id: current.id }, data: { seenAt: new Date() } });
     current.seenAt = new Date();
   }
-  const all = await withProgress(rows.map(toPublicAssignment));
+  // The DEO does not see the per-entry rate.
+  const all = await withProgress(rows.map((r) => {
+    const { ratePerEntry: _r, ...a } = toPublicAssignment(r);
+    return a;
+  }));
   return {
     current: current ? all.find((a) => a.id === current.id)! : null,
     history: all.filter((a) => a.status !== "active"),

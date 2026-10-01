@@ -46,11 +46,11 @@ export async function claimOrphans(verifierId: string) {
       order by submitted_at limit 200 for update skip locked)`;
 }
 
-/** Dashboard cards + month-wise income (IST). */
+/** Dashboard cards + month-wise income (IST). Totals only – the per-entry rate is not shown to verifiers. */
 export async function verifierSummary(verifierId: string) {
   await claimOrphans(verifierId);
   const db = prisma();
-  const [assigned, pending, decisions, monthly, settings] = await Promise.all([
+  const [assigned, pending, decisions, monthly] = await Promise.all([
     db.entry.count({ where: { verifierId } }),
     db.entry.count({ where: { verifierId, status: "pending" } }),
     db.verification.groupBy({ by: ["decision"], where: { verifierId }, _count: { _all: true }, _sum: { rate: true } }),
@@ -61,7 +61,6 @@ export async function verifierSummary(verifierId: string) {
              coalesce(sum(rate), 0) as income
       from verifications where verifier_id = ${verifierId}
       group by 1 order by 1 desc`,
-    getSettings(),
   ]);
   const d = (k: "approved" | "rejected") => decisions.find((x) => x.decision === k);
   const todayIST = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
@@ -75,7 +74,6 @@ export async function verifierSummary(verifierId: string) {
     rejected: d("rejected")?._count._all ?? 0,
     income: (d("approved")?._sum.rate ?? 0) + (d("rejected")?._sum.rate ?? 0),
     verifiedToday: Number(today[0]?.n ?? 0),
-    rate: settings.verifierRate,
     monthly: monthly.map((m) => ({ month: m.month, approved: Number(m.approved), rejected: Number(m.rejected), income: Number(m.income) })),
   };
 }
@@ -130,7 +128,7 @@ export async function decide(req: Request, verifierId: string, id: string, v: z.
       link: `/deo/entries/${id}`,
     });
   }
-  return { entry: toPublicEntry(entry), rate: verifierRate };
+  return { entry: toPublicEntry(entry) };
 }
 
 /** Approve / reject history of this verifier (newest first). */
@@ -145,7 +143,6 @@ export async function verifierHistory(verifierId: string, decision?: string) {
     id: r.id,
     decision: r.decision,
     reason: r.reason,
-    rate: r.rate,
     createdAt: r.createdAt,
     entry: { id: r.entry.id, udiseCode: r.entry.udiseCode, schoolName: r.entry.schoolName, pincode: r.entry.pincode, currentStatus: r.entry.status },
     deo: r.entry.deo,

@@ -29,7 +29,7 @@ export function toPublicEntry(e: Entry) {
       yearRecognitionPri: e.yearRecognitionPri,
       schoolType: e.schoolType,
     },
-    ratePerEntry: e.ratePerEntry,
+    // ratePerEntry is never sent to DEOs or verifiers – only the admin sees rates.
     status: e.status,
     rejectReason: e.rejectReason,
     verifiedAt: e.verifiedAt,
@@ -212,12 +212,12 @@ export async function getMyEntry(deoId: string, id: string) {
   return toPublicEntry(e);
 }
 
-type Counts = { total: number; pending: number; approved: number; rejected: number; earnings: number; pendingValue: number; rejectedValue: number };
-const zero = (): Counts => ({ total: 0, pending: 0, approved: 0, rejected: 0, earnings: 0, pendingValue: 0, rejectedValue: 0 });
+type Counts = { total: number; pending: number; approved: number; rejected: number; earnings: number };
+const zero = (): Counts => ({ total: 0, pending: 0, approved: 0, rejected: 0, earnings: 0 });
 
 /**
  * GET /me/summary – dashboard numbers from the database: totals, earnings
- * (approved × rate), month-wise history (IST) and progress of the current work.
+ * (total only – the per-entry rate is not shown), month-wise history (IST) and progress of the current work.
  */
 export async function mySummary(deoId: string) {
   const db = prisma();
@@ -238,8 +238,6 @@ export async function mySummary(deoId: string) {
       c.total += n;
       c[r.status] += n;
       if (r.status === "approved") c.earnings += amount;
-      if (r.status === "pending") c.pendingValue += amount;
-      if (r.status === "rejected") c.rejectedValue += amount;
     }
   }
 
