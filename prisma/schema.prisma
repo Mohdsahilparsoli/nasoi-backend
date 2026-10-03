@@ -222,6 +222,9 @@ model Assignment {
   status       AssignmentStatus @default(active)
   seenAt       DateTime?        @map("seen_at") @db.Timestamptz(6)
   completedAt  DateTime?        @map("completed_at") @db.Timestamptz(6)
+  /// Set when the verifier has approved every entry (approved = target).
+  allApprovedAt DateTime?       @map("all_approved_at") @db.Timestamptz(6)
+  allApprovedBy String?         @map("all_approved_by")
   cancelledAt  DateTime?        @map("cancelled_at") @db.Timestamptz(6)
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -441,6 +444,7 @@ model ConnectRequest {
   reply       String?       @db.VarChar(1000)
   respondedAt DateTime?     @map("responded_at") @db.Timestamptz(6)
   meetingId   String?       @unique @map("meeting_id")
+  groupId     String?       @map("group_id") // one admin message sent to many
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 

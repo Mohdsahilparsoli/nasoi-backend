@@ -39,7 +39,7 @@ connectRouter.get("/meetings", async (req, res) => {
   res.json({ meetings: await listMeetings(me(req), view) });
 });
 
-/** POST /connect/meetings – { title, link, startsAt, durationMin, notes, participantIds, entryId?, requestId? } */
+/** POST /connect/meetings – { title, link, startsAt, durationMin, notes, participantIds, audience? (admin: all, all_deo, all_vr), entryId?, requestId? } */
 connectRouter.post("/meetings", async (req, res) => {
   res.status(201).json({ meeting: await createMeeting(req, me(req), meetingSchema.parse(req.body)) });
 });
@@ -54,9 +54,9 @@ connectRouter.get("/requests", async (req, res) => {
   res.json({ requests: await listRequests(me(req), req.query.box === "sent" ? "sent" : "inbox") });
 });
 
-/** POST /connect/requests – { kind: meeting|entry|general, toId, entryId?, subject?, message, preferredAt? } */
+/** POST /connect/requests – { kind, toId | toIds[] | audience (admin: all, all_deo, all_vr), entryId?, subject?, message, preferredAt? } → { request, sent } */
 connectRouter.post("/requests", async (req, res) => {
-  res.status(201).json({ request: await createRequest(req, me(req), requestSchema.parse(req.body)) });
+  res.status(201).json(await createRequest(req, me(req), requestSchema.parse(req.body)));
 });
 
 /** POST /connect/requests/:id/respond – { action: accept|decline|close, reply? } */

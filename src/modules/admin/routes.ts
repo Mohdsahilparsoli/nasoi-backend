@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { noStore, requireAuth } from "../../middleware/security.js";
-import { changeVerifierSchema, createAssignmentSchema, updateAssignmentSchema } from "../assignments/schema.js";
-import { changeVerifier, createAssignment, listAssignments, listVerifiers, updateAssignmentStatus } from "../assignments/service.js";
+import { changeDeoSchema, changeVerifierSchema, createAssignmentSchema, updateAssignmentSchema } from "../assignments/schema.js";
+import { changeDeo, changeVerifier, createAssignment, listAssignments, listVerifiers, updateAssignmentStatus } from "../assignments/service.js";
 import { audit } from "../../lib/audit.js";
 import { getSettings, mailTemplateSchema, settingsSchema, updateMailTemplate, updateSettings } from "../../lib/settings.js";
 import { emailToSchema } from "../../lib/files.js";
@@ -46,6 +46,12 @@ adminRouter.post("/assignments", async (req, res) => {
 adminRouter.patch("/assignments/:id", async (req, res) => {
   const { status } = updateAssignmentSchema.parse(req.body);
   res.json({ assignment: await updateAssignmentStatus(req, req.auth!.sub, String(req.params.id), status) });
+});
+
+/** PATCH /admin/assignments/:id/deo – give active work to another (free, active) DEO. */
+adminRouter.patch("/assignments/:id/deo", async (req, res) => {
+  const { deoId } = changeDeoSchema.parse(req.body);
+  res.json(await changeDeo(req, req.auth!.sub, String(req.params.id), deoId));
 });
 
 /** PATCH /admin/assignments/:id/verifier – change the verifier of an area. */

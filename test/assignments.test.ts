@@ -44,13 +44,13 @@ const call = (token: string, method: string, path: string, body?: unknown) =>
   fetch(base + "/api/v1" + path, { method, headers: { ...H, authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
 const tomorrow = () => new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
 const work = (over: Record<string, unknown> = {}) => ({
-  deoId: "DEO-01-2026", taskType: "Data Entry Services", recordType: "school", verifierId: "VR-01-2026", verifierRate: 2, target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
+  deoId: "DEO-01-2026", taskType: "Data Entry Services", recordType: "school", verifierId: over.deoId === "DEO-02-2026" ? "VR-04-2026" : "VR-03-2026", verifierRate: 2, target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
   block: "Mawana", village: "Kithore", pincode: PIN1, deadline: tomorrow(), instructions: "Cover all government schools.\nStart with Class 10.", ...over,
 });
 
 before(async () => {
   await (await import("./fixtures.js")).ensureFixtures();
-  await prisma().assignment.deleteMany({ where: { deoId: { in: ["DEO-01-2026", "DEO-02-2026"] } } });
+  await prisma().assignment.deleteMany({ where: { OR: [{ deoId: { in: ["DEO-01-2026", "DEO-02-2026"] } }, { verifierId: { in: ["VR-03-2026", "VR-04-2026"] } }] } });
   await prisma().notification.deleteMany({ where: { userId: { in: ["DEO-01-2026", "DEO-02-2026"] } } });
   await new Promise<void>((r) => smtp.listen(2590, "127.0.0.1", r));
   server = createApp().listen(0);
@@ -164,6 +164,62 @@ describe("admin: operators and assignments", () => {
     assert.equal(mine.history[0].id, first);
     const all = await (await call(admin, "GET", `/admin/assignments?q=${PIN1}`)).json();
     assert.equal(all.assignments.length, 2);
+  });
+
+  test("a verifier works on one area at a time; DEO and verifier can be changed", async () => {
+    const cur = `ASG-${PIN1}-002`;
+    await prisma().assignment.updateMany({ where: { deoId: "DEO-02-2026", status: "active" }, data: { status: "cancelled" } });
+    // VR-03 is busy with DEO-01's work: no second area.
+    const vrBusy = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO-02-2026", verifierId: "VR-03-2026", pincode: pin() }));
+    assert.equal(vrBusy.status, 409);
+    const vb = (await vrBusy.json()).error;
+    assert.equal(vb.code, "VERIFIER_BUSY");
+    assert.match(vb.message, new RegExp(cur));
+    const vrs = (await (await call(admin, "GET", "/admin/verifiers")).json()).verifiers as { id: string; eligible: boolean; currentAssignment: { id: string } | null }[];
+    assert.equal(vrs.find((v) => v.id === "VR-03-2026")!.eligible, false);
+    assert.equal(vrs.find((v) => v.id === "VR-03-2026")!.currentAssignment!.id, cur);
+    assert.equal(vrs.find((v) => v.id === "VR-04-2026")!.eligible, true);
+
+    // Change the verifier: only to a free one.
+    const busyAsg = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO-02-2026", pincode: pin() }));
+    assert.equal(busyAsg.status, 201); // DEO-02 + VR-04
+    const toBusy = await call(admin, "PATCH", `/admin/assignments/${cur}/verifier`, { verifierId: "VR-04-2026" });
+    assert.equal(toBusy.status, 409);
+    assert.equal((await toBusy.json()).error.code, "VERIFIER_BUSY");
+    await prisma().assignment.updateMany({ where: { deoId: "DEO-02-2026", status: "active" }, data: { status: "cancelled" } });
+    assert.equal((await call(admin, "PATCH", `/admin/assignments/${cur}/verifier`, { verifierId: "VR-04-2026" })).status, 200);
+    assert.equal((await call(admin, "PATCH", `/admin/assignments/${cur}/verifier`, { verifierId: "VR-03-2026" })).status, 200);
+
+    // Change the DEO: the new one must be free; the old one becomes free.
+    const same = await call(admin, "PATCH", `/admin/assignments/${cur}/deo`, { deoId: "DEO-01-2026" });
+    assert.equal(same.status, 409);
+    const ch = await call(admin, "PATCH", `/admin/assignments/${cur}/deo`, { deoId: "DEO-02-2026" });
+    assert.equal(ch.status, 200);
+    assert.equal((await ch.json()).assignment.deoId, "DEO-02-2026");
+    assert.equal((await (await call(deo2, "GET", "/me/assignments")).json()).current.id, cur);
+    assert.equal((await (await call(deo1, "GET", "/me/assignments")).json()).current, null, "old DEO is free");
+    assert.equal((await call(admin, "PATCH", `/admin/assignments/${cur}/deo`, { deoId: "VR-01-2026" })).status, 404);
+    assert.equal((await call(vr, "PATCH", `/admin/assignments/${cur}/deo`, { deoId: "DEO-01-2026" })).status, 403);
+    assert.equal((await call(admin, "PATCH", `/admin/assignments/${cur}/deo`, { deoId: "DEO-01-2026" })).status, 200);
+  });
+
+  test("all entries approved by the verifier → status and admin notification", async () => {
+    const cur = `ASG-${PIN1}-002`;
+    await prisma().assignment.update({ where: { id: cur }, data: { target: 1 } });
+    const { schoolRecord } = await import("./fixtures.js");
+    const made = await call(deo1, "POST", "/me/entries", schoolRecord());
+    assert.equal(made.status, 201);
+    const entryId = (await made.json()).entry.id;
+    const vr3 = await login("VR-03-2026", "Abcd@2026");
+    await prisma().notification.deleteMany({ where: { userId: "ADMIN", title: { startsWith: "All entries approved" } } });
+    assert.equal((await call(vr3, "POST", `/verifier/entries/${entryId}/decision`, { decision: "approved" })).status, 200);
+    const a = (await (await call(admin, "GET", `/admin/assignments?q=${cur}`)).json()).assignments[0];
+    assert.ok(a.allApprovedAt, "assignment marked all approved");
+    assert.equal(a.allApprovedBy, "VR-03-2026");
+    const n = await prisma().notification.findFirst({ where: { userId: "ADMIN", title: `All entries approved – ${cur}` } });
+    assert.ok(n && n.body.includes("VR-03-2026") && n.body.includes("DEO-01-2026"), "admin notified with the IDs");
+    const areas = (await (await call(vr3, "GET", "/verifier/areas")).json()).areas;
+    assert.ok(areas.find((x: { id: string }) => x.id === cur).allApprovedAt);
   });
 
   test("employee detail; inactive / rejected / active", async () => {

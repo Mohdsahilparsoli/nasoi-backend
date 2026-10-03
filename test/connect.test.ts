@@ -177,6 +177,57 @@ describe("connect: meetings and requests", () => {
 });
 
 describe("admin overview", () => {
+  test("contacts come only from CURRENT work: old areas are not visible", async () => {
+    const db = prisma();
+    const old = await db.assignment.create({
+      data: {
+        id: `ASG-OLD-${Date.now()}`, deoId: OTHER, assignedById: "ADMIN", taskType: "Data Entry Services", target: 1, ratePerEntry: 10,
+        verifierId: VR, state: "Uttar Pradesh", district: "Meerut", block: "", village: "", pincode: "250498",
+        deadline: new Date(Date.now() + 86_400_000), status: "completed",
+      },
+    });
+    const ids = (await (await call(vr, "GET", "/connect/contacts")).json()).contacts.map((c: { id: string }) => c.id);
+    assert.ok(ids.includes(DEO) && ids.includes("ADMIN"), "current DEO and admin");
+    assert.ok(!ids.includes(OTHER), "DEO of a completed area is not a contact");
+    assert.ok(!ids.some((id: string) => id.startsWith("VR-")), "no other verifier");
+    const deoIds = (await (await call(deo, "GET", "/connect/contacts")).json()).contacts.map((c: { id: string }) => c.id);
+    assert.deepEqual(deoIds.sort(), ["ADMIN", VR].sort());
+    await db.assignment.delete({ where: { id: old.id } });
+  });
+
+  test("admin sends to all / all DEOs / all verifiers / chosen people; employees cannot", async () => {
+    const db = prisma();
+    const activeDeos = await db.user.count({ where: { role: "deo", status: "active" } });
+    const activeVrs = await db.user.count({ where: { role: "verifier", status: "active" } });
+    mails.length = 0;
+    const m = await call(admin, "POST", "/connect/meetings", { title: "All DEO briefing", link: "https://meet.google.com/abc-defg-hij", startsAt: soon(90), audience: "all_deo" });
+    assert.equal(m.status, 201);
+    const mj = (await m.json()).meeting;
+    assert.equal(mj.participants.filter((p: { role: string }) => p.role === "deo").length, activeDeos);
+    assert.ok(mj.participants.every((p: { role: string }) => p.role !== "verifier"));
+    await wait();
+    assert.ok(mails.length >= activeDeos, "every DEO is e-mailed");
+    const allM = await call(admin, "POST", "/connect/meetings", { title: "Everyone", link: "https://zoom.us/j/123456789", startsAt: soon(120), audience: "all" });
+    assert.equal((await allM.json()).meeting.participants.length, activeDeos + activeVrs + 1);
+
+    const r = await call(admin, "POST", "/connect/requests", { kind: "general", audience: "all_vr", subject: "Speed up", message: "Please finish pending verification today." });
+    assert.equal(r.status, 201);
+    const rj = await r.json();
+    assert.equal(rj.sent, activeVrs);
+    assert.ok(rj.request.groupId?.startsWith("GRP"));
+    const inbox = (await (await call(vr, "GET", "/connect/requests")).json()).requests;
+    assert.ok(inbox.some((x: { subject: string }) => x.subject === "Speed up"), "verifier received it");
+    const pick = await call(admin, "POST", "/connect/requests", { kind: "general", toIds: [DEO, VR], message: "Two people only, please." });
+    assert.equal((await pick.json()).sent, 2);
+
+    assert.equal((await call(deo, "POST", "/connect/meetings", { title: "Everyone call", link: "https://zoom.us/j/123456789", startsAt: soon(30), audience: "all" })).status, 403);
+    assert.equal((await call(vr, "POST", "/connect/requests", { kind: "general", audience: "all_deo", message: "Hello everyone" })).status, 403);
+    assert.equal((await call(vr, "POST", "/connect/requests", { kind: "general", toIds: [DEO, "ADMIN"], message: "Hello both of you" })).status, 403);
+    assert.equal((await call(admin, "POST", "/connect/requests", { kind: "general", message: "No receiver here" })).status, 400);
+    await db.meeting.deleteMany({ where: { title: { in: ["All DEO briefing", "Everyone"] } } });
+    await db.connectRequest.deleteMany({ where: { fromId: "ADMIN", subject: { in: ["Speed up", "Request"] } } });
+  });
+
   test("numbers come from the database", async () => {
     const r = await call(admin, "GET", "/admin/overview");
     assert.equal(r.status, 200);

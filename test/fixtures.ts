@@ -7,6 +7,8 @@ export const FIXTURES = [
   { id: "DEO-03-2026", role: "deo", name: "Sunil Yadav", mobile: "9811100033", email: "sunil.demo@example.com", password: "Abcd@2026" },
   { id: "DEO-04-2026", role: "deo", name: "Meena Devi", mobile: "9811100044", email: "meena.demo@example.com", password: "Abcd@2026" },
   { id: "VR-02-2026", role: "verifier", name: "Karan Singh", mobile: "9990011224", email: "verifier2.demo@example.com", password: "Abcd@2026" },
+  { id: "VR-03-2026", role: "verifier", name: "Test Verifier Three", mobile: "9990011225", email: "verifier3.demo@example.com", password: "Abcd@2026" },
+  { id: "VR-04-2026", role: "verifier", name: "Test Verifier Four", mobile: "9990011226", email: "verifier4.demo@example.com", password: "Abcd@2026" },
   { id: "VR-01-2026", role: "verifier", name: "Anjali Verma", mobile: "9990011223", email: "verifier.demo@example.com", password: "Abcd@2026" },
   { id: "ADMIN", role: "admin", name: "Super Admin", mobile: "9000000000", email: "admin.demo@example.com", password: "Admin@2026" },
 ] as const;

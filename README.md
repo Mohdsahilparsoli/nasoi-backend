@@ -30,7 +30,8 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | GET  | `/api/v1/admin/operators/:id` | Admin | Full profile (masked), documents, assignments / areas |
 | PATCH | `/api/v1/admin/operators/:id/status` | Admin | `{ status: "active" \| "inactive" \| "rejected", reason }` – reason required to reject (rejecting logs out and blocks login). The employee is notified / e-mailed. New registrations start as **pending**; only **active** employees can be assigned work |
 | GET / POST | `/api/v1/admin/assignments` | Admin | List / assign work: DEO, **verifier of the area**, **school or college**, DEO amount and verifier amount. Rules: one active assignment per DEO and per PIN code; ID `ASG-<PIN>-001` |
-| PATCH | `/api/v1/admin/assignments/:id/verifier` | Admin | Change the verifier of an area (pending entries move) |
+| PATCH | `/api/v1/admin/assignments/:id/verifier` | Admin | Change the verifier of an area – only to a **free** verifier (pending entries move) |
+| PATCH | `/api/v1/admin/assignments/:id/deo` | Admin | `{ deoId }` – give active work to another **free, active** DEO. Entries already made stay with their maker; rejected ones move to the new DEO; the old DEO becomes free |
 | GET  | `/api/v1/admin/verifiers` | Admin | Verifiers with active areas and pending entries |
 | GET  | `/api/v1/verifier/areas` | Verifier | My areas with the DEO's card (ID, name, mobile, photo) |
 | POST | `/api/v1/profile/me/photo` | Bearer | Change my profile photo (JPG/PNG ≤ 2 MB) |
@@ -66,11 +67,11 @@ E-mail exports need SMTP; without it they answer `503 MAIL_DISABLED`. Attachment
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/connect/contacts` | People I may contact: admin → everyone; DEO → the verifiers of their work + admin; verifier → their DEOs + admin |
+| GET | `/connect/contacts` | People I may contact: admin → everyone; DEO → only the verifier of their **current** work + admin; verifier → only the DEO of their **current** area + admin |
 | GET | `/connect/summary` | Upcoming / live meetings and open requests (badge) |
-| GET / POST | `/connect/meetings?view=upcoming\|past\|all` | List / schedule `{ title, link, startsAt, durationMin, notes, participantIds, entryId?, requestId? }`. Link must be **Zoom, Google Meet or Teams** (https). Participants get an in-app notification and an e-mail with the time (IST) and a Join button |
+| GET / POST | `/connect/meetings?view=upcoming\|past\|all` | List / schedule `{ title, link, startsAt, durationMin, notes, participantIds, audience?, entryId?, requestId? }`. Admin `audience`: `all`, `all_deo`, `all_vr` (every active employee of the group). Link must be **Zoom, Google Meet or Teams** (https). Participants get an in-app notification and an e-mail with the time (IST) and a Join button |
 | POST | `/connect/meetings/:id/cancel` | Organiser or admin; everyone is told |
-| GET / POST | `/connect/requests?box=inbox\|sent` | Requests `{ kind: meeting\|entry\|general, toId, entryId?, subject?, message, preferredAt? }` – notification + e-mail |
+| GET / POST | `/connect/requests?box=inbox\|sent` | Requests `{ kind: meeting\|entry\|general, toId, entryId?, subject?, message, preferredAt? }` – notification + e-mail. Admin can also send `toIds[]` or `audience` (all / all_deo / all_vr): one request per person → `{ request, sent }` |
 | POST | `/connect/requests/:id/respond` | `{ action: accept\|decline\|close, reply }` (decline needs a reason). A meeting request can also be answered by scheduling a meeting with its `requestId` |
 | PATCH | `/profile/me/meeting-link` | `{ link }` – my personal Zoom / Google Meet room, shown as a Join button on my card |
 
@@ -79,6 +80,8 @@ E-mail exports need SMTP; without it they answer `503 MAIL_DISABLED`. Attachment
 **Money only on final approval:** the DEO earns the work's rate and the verifier the area's rate **only when an entry is approved**; a rejection earns nothing (stored with rate 0). The verifier can mark the wrong fields (`fields: [...]` on reject) – the DEO sees them highlighted.
 
 **Rates are private:** DEOs and verifiers only see their total earnings / income. The per-entry rates (DEO rate per assignment, verifier rate in settings) are set and seen only by the Super Admin – they are never sent to DEO or verifier APIs or e-mails.
+
+**One area at a time:** a verifier, like a DEO, gets one active area at a time – a new area only after the admin completes (or cancels) the current one. When the verifier has approved every entry (approved = target) the work shows **All approved by VR** and every admin gets a notification with the assignment, DEO and verifier IDs; the admin then marks it completed.
 
 **Verifier assignment:** the admin chooses a verifier for each area; all its entries go to that verifier (a resubmitted entry goes back to them). For older work without a verifier, entries go to the active verifier with the fewest pending entries. Documents (Aadhaar, bank proof …) can be opened only by their owner and the admin.
 

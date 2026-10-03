@@ -1,3 +1,4 @@
+import { checkAllApproved } from "../assignments/service.js";
 import type { Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
@@ -138,6 +139,7 @@ export async function decide(req: Request, verifierId: string, id: string, v: z.
   });
 
   await audit(req, v.decision === "approved" ? "entry.approved" : "entry.rejected", verifierId, { entryId: id, deoId: entry.deoId });
+  if (v.decision === "approved") await checkAllApproved(entry.assignmentId, verifierId);
   if (v.decision === "rejected") {
     // In-app only: a rejection needs action, but an e-mail for every entry would be too much.
     await notify(entry.deo, {
@@ -184,6 +186,7 @@ export async function verifierAreas(verifierId: string) {
     area: { state: a.state, district: a.district, block: a.block, village: a.village, pincode: a.pincode },
     deadline: a.deadline.toISOString().slice(0, 10),
     status: a.status,
+    allApprovedAt: a.allApprovedAt,
     deo: cards.get(a.deoId) ?? { id: a.deoId, name: a.deoId, mobile: null, hasPhoto: false, meetingLink: null, platform: null },
     progress: withP[i].progress,
   }));

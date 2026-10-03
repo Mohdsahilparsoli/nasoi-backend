@@ -30,6 +30,8 @@ const summary = async () => (await call(vr, "GET", "/verifier/summary")).json();
 before(async () => {
   await (await import("./fixtures.js")).ensureFixtures();
   await prisma().assignment.deleteMany({ where: { deoId: DEO } });
+  // A verifier has one area at a time: free both test verifiers from other files' work.
+  await prisma().assignment.updateMany({ where: { verifierId: { in: ["VR-01-2026", "VR-02-2026"] }, status: "active" }, data: { status: "cancelled" } });
   await prisma().verification.deleteMany({ where: { verifierId: "VR-01-2026" } });
   // VR101 starts empty: hand its old entries and any unassigned pending entries to VR102.
   await prisma().entry.updateMany({ where: { OR: [{ verifierId: "VR-01-2026" }, { verifierId: null, status: "pending" }] }, data: { verifierId: "VR-02-2026" } });

@@ -55,6 +55,10 @@ export const changeVerifierSchema = z.object({
   verifierId: z.string().trim().min(1, "Select a Verifier").max(20).transform((v) => v.toUpperCase()),
 });
 
+export const changeDeoSchema = z.object({
+  deoId: z.string().trim().min(1, "Select a Data Entry Operator").max(20).transform((v) => v.toUpperCase()),
+});
+
 export const updateAssignmentSchema = z.object({
   status: z.enum(["completed", "cancelled"], { error: "Choose completed or cancelled" }),
 });

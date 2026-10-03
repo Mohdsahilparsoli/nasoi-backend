@@ -46,8 +46,9 @@ const CAN_CONTACT = ["active", "pending", "inactive"] as const;
 /**
  * The people this user may send meetings / requests to:
  * - admin: every employee and other admins;
- * - DEO: the verifiers of their work and entries, and the admin;
- * - verifier: the DEOs of their areas and entries, and the admin.
+ * - DEO: only the verifier of their CURRENT (active) work, and the admin;
+ * - verifier: only the DEO of their CURRENT area, and the admin.
+ * Nobody else from other areas is visible.
  */
 export async function contactIds(me: Me): Promise<Set<string>> {
   const db = prisma();
@@ -57,22 +58,31 @@ export async function contactIds(me: Me): Promise<Set<string>> {
     const all = await db.user.findMany({ where: { status: { in: [...CAN_CONTACT] } }, select: { id: true } });
     all.forEach((u) => ids.add(u.id));
   } else if (me.role === "deo") {
-    const [a, e] = await Promise.all([
-      db.assignment.findMany({ where: { deoId: me.sub, verifierId: { not: null } }, select: { verifierId: true } }),
-      db.entry.findMany({ where: { deoId: me.sub }, select: { verifierId: true, verifiedById: true }, distinct: ["verifierId", "verifiedById"] }),
-    ]);
+    const a = await db.assignment.findMany({ where: { deoId: me.sub, status: "active", verifierId: { not: null } }, select: { verifierId: true } });
     a.forEach((x) => x.verifierId && ids.add(x.verifierId));
-    e.forEach((x) => [x.verifierId, x.verifiedById].forEach((v) => v && ids.add(v)));
   } else if (me.role === "verifier") {
-    const [a, e] = await Promise.all([
-      db.assignment.findMany({ where: { verifierId: me.sub }, select: { deoId: true }, distinct: ["deoId"] }),
-      db.entry.findMany({ where: { OR: [{ verifierId: me.sub }, { verifiedById: me.sub }] }, select: { deoId: true }, distinct: ["deoId"] }),
-    ]);
+    const a = await db.assignment.findMany({ where: { verifierId: me.sub, status: "active" }, select: { deoId: true } });
     a.forEach((x) => ids.add(x.deoId));
-    e.forEach((x) => ids.add(x.deoId));
   }
   ids.delete(me.sub);
   return ids;
+}
+
+/** Admin only: "all", "all DEOs", "all verifiers" – every ACTIVE employee of that group. */
+export const audienceSchema = z.enum(["custom", "all", "all_deo", "all_vr"]).default("custom");
+type Audience = z.infer<typeof audienceSchema>;
+
+async function audienceIds(me: Me, audience: Audience): Promise<string[]> {
+  if (audience === "custom") return [];
+  if (me.role !== "admin") throw fieldError(403, "ADMIN_ONLY", "audience", "Only the admin can send to everyone.");
+  const role = audience === "all_deo" ? ["deo"] : audience === "all_vr" ? ["verifier"] : ["deo", "verifier"];
+  const rows = await prisma().user.findMany({ where: { role: { in: role as ("deo" | "verifier")[] }, status: "active" }, select: { id: true }, orderBy: { id: "asc" } });
+  return rows.map((r) => r.id);
+}
+
+/** Sends notifications / e-mails a few at a time (SMTP servers limit parallel connections). */
+async function inBatches<T>(items: T[], size: number, fn: (x: T) => Promise<unknown>) {
+  for (let i = 0; i < items.length; i += size) await Promise.all(items.slice(i, i + size).map(fn));
 }
 
 export interface Contact {
@@ -172,7 +182,8 @@ export const meetingSchema = z.object({
     .refine((d) => d.getTime() < Date.now() + 366 * 86_400_000, "Choose a date within a year"),
   durationMin: z.coerce.number().int().min(5, "At least 5 minutes").max(480, "At most 8 hours").default(30),
   notes: z.string().trim().max(1000, "Notes are too long").optional().or(z.literal("")),
-  participantIds: z.array(z.string().trim().toUpperCase().max(20)).max(30, "At most 30 people").default([]),
+  participantIds: z.array(z.string().trim().toUpperCase().max(20)).max(100, "At most 100 people").default([]),
+  audience: audienceSchema,
   entryId: entryIdSchema,
   requestId: z.string().trim().toUpperCase().regex(/^REQ\d{6,}$/).optional(),
 });
@@ -229,8 +240,7 @@ async function sendMeetingMail(meeting: MeetingRow, organizer: string, actorId: 
   const users = await prisma().user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, email: true, role: true } });
   const label = PLATFORM_LABEL[meeting.platform] ?? "Online";
   const when = istDateTime(meeting.startsAt);
-  await Promise.all(
-    users.map((u) =>
+  await inBatches(users, 5, (u) =>
         notify(
           u,
           {
@@ -253,20 +263,20 @@ async function sendMeetingMail(meeting: MeetingRow, organizer: string, actorId: 
             role: u.role,
           }),
         ),
-      ),
   );
 }
 
 /** POST /connect/meetings – schedule a meeting; every participant gets a notification and an e-mail. */
 export async function createMeeting(req: Request, me: Me, v: z.infer<typeof meetingSchema>) {
-  const participants = [...new Set(v.participantIds)].filter((id) => id !== me.sub);
+  const group = await audienceIds(me, v.audience);
+  const participants = [...new Set([...group, ...v.participantIds])].filter((id) => id !== me.sub);
   if (v.requestId) {
     // Scheduling a meeting can answer a meeting request sent to me: the requester joins automatically.
     const r = await prisma().connectRequest.findUnique({ where: { id: v.requestId }, select: { toId: true, fromId: true } });
     if (!r || r.toId !== me.sub) throw new HttpError(404, "Request not found.", "NOT_FOUND");
     if (!participants.includes(r.fromId)) participants.push(r.fromId);
   }
-  if (!participants.length) throw fieldError(400, "NO_PARTICIPANTS", "participantIds", "Choose who should join");
+  if (!participants.length) throw fieldError(400, "NO_PARTICIPANTS", v.audience === "custom" ? "participantIds" : "audience", v.audience === "custom" ? "Choose who should join" : "Nobody active in this group yet");
   await assertContacts(me, participants, "participantIds");
   await assertEntry(me, v.entryId);
   const db = prisma();
@@ -304,7 +314,7 @@ export async function createMeeting(req: Request, me: Me, v: z.infer<typeof meet
 
   const organizer = (await db.user.findUnique({ where: { id: me.sub }, select: { name: true } }))?.name ?? me.sub;
   await sendMeetingMail(meeting, `${organizer} (${me.sub})`, me.sub);
-  await audit(req, "meeting.created", me.sub, { meetingId: meeting.id, platform, people: participants.length });
+  await audit(req, "meeting.created", me.sub, { meetingId: meeting.id, platform, people: participants.length, audience: v.audience });
   return (await toPublicMeetings([meeting], me))[0]!;
 }
 
@@ -331,13 +341,17 @@ const KIND_SUBJECT: Record<string, string> = { meeting: "Request for a meeting",
 export const requestSchema = z
   .object({
     kind: z.enum(["meeting", "entry", "general"], { error: "Choose the type of request" }),
-    toId: z.string().trim().toUpperCase().min(1, "Choose who to send it to").max(20),
+    toId: z.string().trim().toUpperCase().max(20).optional().or(z.literal("").transform(() => undefined)),
+    /** Admin only: several people at once (or a whole group via `audience`). */
+    toIds: z.array(z.string().trim().toUpperCase().max(20)).max(100, "At most 100 people").default([]),
+    audience: audienceSchema,
     entryId: entryIdSchema,
     subject: z.string().trim().max(120, "Subject is too long").optional().or(z.literal("")),
     message: z.string().trim().min(5, "Write your message (at least 5 characters)").max(1000, "Message is too long (max 1000)"),
     preferredAt: z.coerce.date().optional().or(z.literal("").transform(() => undefined)),
   })
   .superRefine((v, ctx) => {
+    if (v.audience === "custom" && !v.toId && !v.toIds.length) ctx.addIssue({ code: "custom", path: ["toId"], message: "Choose who to send it to" });
     if (v.kind === "entry" && !v.entryId) ctx.addIssue({ code: "custom", path: ["entryId"], message: "Enter the entry ID this request is about" });
     if (v.preferredAt && v.preferredAt.getTime() < Date.now() - 5 * 60_000) ctx.addIssue({ code: "custom", path: ["preferredAt"], message: "The preferred time is in the past" });
   });
@@ -359,6 +373,7 @@ async function toPublicRequests(rows: RequestRow[], me: Me) {
     reply: r.reply,
     respondedAt: r.respondedAt,
     meetingId: r.meetingId,
+    groupId: r.groupId,
     incoming: r.toId === me.sub,
     createdAt: r.createdAt,
   }));
@@ -371,46 +386,70 @@ export async function listRequests(me: Me, box: string) {
   return toPublicRequests(rows, me);
 }
 
-/** POST /connect/requests – the receiver gets a notification and an e-mail. */
+/**
+ * POST /connect/requests – the receiver gets a notification and an e-mail.
+ * The admin can send the same message to many people (all, all DEOs, all
+ * verifiers or a chosen list): one request per person, sharing a group id.
+ */
 export async function createRequest(req: Request, me: Me, v: z.infer<typeof requestSchema>) {
-  if (v.toId === me.sub) throw fieldError(400, "SELF", "toId", "You cannot send a request to yourself");
-  await assertContacts(me, [v.toId], "toId");
+  const group = await audienceIds(me, v.audience);
+  const list = [...new Set([...group, ...(v.toId ? [v.toId] : []), ...v.toIds])].filter((id) => id !== me.sub);
+  if (!list.length) {
+    if (v.toId === me.sub) throw fieldError(400, "SELF", "toId", "You cannot send a request to yourself");
+    throw fieldError(400, "NO_RECIPIENTS", v.audience === "custom" ? "toId" : "audience", v.audience === "custom" ? "Choose who to send it to" : "Nobody active in this group yet");
+  }
+  if (list.length > 1 && me.role !== "admin") throw fieldError(403, "ADMIN_ONLY", "toId", "Send a request to one person at a time.");
+  await assertContacts(me, list, "toId");
   await assertEntry(me, v.entryId);
   const db = prisma();
   const recent = await db.connectRequest.count({ where: { fromId: me.sub, createdAt: { gte: new Date(Date.now() - 3_600_000) } } });
-  if (recent >= 20) throw new HttpError(429, "Too many requests in the last hour. Please wait a little.", "TOO_MANY");
+  if (me.role !== "admin" && recent >= 20) throw new HttpError(429, "Too many requests in the last hour. Please wait a little.", "TOO_MANY");
   const subject = v.subject || (v.entryId ? `${KIND_SUBJECT[v.kind]} – ${v.entryId}` : KIND_SUBJECT[v.kind]!);
 
-  const row = await db.$transaction(async (tx) =>
-    tx.connectRequest.create({
-      data: {
-        id: await nextId(tx, "request", "REQ"),
-        kind: v.kind,
-        fromId: me.sub,
-        toId: v.toId,
-        entryId: v.entryId ?? null,
-        subject,
-        message: v.message,
-        preferredAt: v.preferredAt ?? null,
-      },
-    }),
-  );
-  const [from, to] = await Promise.all([
+  const rows = await db.$transaction(async (tx) => {
+    const groupId = list.length > 1 ? await nextId(tx, "request-group", "GRP") : null;
+    const out: RequestRow[] = [];
+    for (const toId of list) {
+      out.push(
+        await tx.connectRequest.create({
+          data: {
+            id: await nextId(tx, "request", "REQ"),
+            kind: v.kind,
+            fromId: me.sub,
+            toId,
+            entryId: v.entryId ?? null,
+            subject,
+            message: v.message,
+            preferredAt: v.preferredAt ?? null,
+            groupId,
+          },
+        }),
+      );
+    }
+    return out;
+  }, { timeout: 30_000 });
+
+  const [from, people] = await Promise.all([
     db.user.findUnique({ where: { id: me.sub }, select: { name: true } }),
-    db.user.findUniqueOrThrow({ where: { id: v.toId }, select: { id: true, name: true, email: true, role: true } }),
+    db.user.findMany({ where: { id: { in: list } }, select: { id: true, name: true, email: true, role: true } }),
   ]);
   const fromText = `${from?.name ?? me.sub} (${me.sub})`;
-  await notify(
-    to,
-    {
-      title: `${v.kind === "meeting" ? "Meeting request" : v.kind === "entry" ? "Entry request" : "New request"} from ${from?.name ?? me.sub}`,
-      body: `${subject}${row.preferredAt ? ` · preferred ${istDateTime(row.preferredAt)}` : ""}`,
-      link: `/${panel(to.role)}/connect?tab=requests`,
-    },
-    requestEmail({ name: to.name, id: row.id, kind: v.kind, from: fromText, subject, message: v.message, entryId: row.entryId, preferredAt: row.preferredAt, role: to.role }),
-  );
-  await audit(req, "request.created", me.sub, { requestId: row.id, kind: v.kind, to: v.toId });
-  return (await toPublicRequests([row], me))[0]!;
+  const byId = new Map(rows.map((r) => [r.toId, r]));
+  await inBatches(people, 5, (to) => {
+    const row = byId.get(to.id)!;
+    return notify(
+      to,
+      {
+        title: `${v.kind === "meeting" ? "Meeting request" : v.kind === "entry" ? "Entry request" : me.role === "admin" ? "Message" : "New request"} from ${from?.name ?? me.sub}`,
+        body: `${subject}${row.preferredAt ? ` · preferred ${istDateTime(row.preferredAt)}` : ""}`,
+        link: `/${panel(to.role)}/connect?tab=requests`,
+      },
+      requestEmail({ name: to.name, id: row.id, kind: v.kind, from: fromText, subject, message: v.message, entryId: row.entryId, preferredAt: row.preferredAt, role: to.role }),
+    );
+  });
+  await audit(req, "request.created", me.sub, { requestId: rows[0]!.id, kind: v.kind, to: list.length === 1 ? list[0]! : `${list.length} people`, audience: v.audience });
+  const pub = await toPublicRequests(rows.slice(0, 1), me);
+  return { request: pub[0]!, sent: rows.length };
 }
 
 export const respondSchema = z

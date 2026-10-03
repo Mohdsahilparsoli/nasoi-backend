@@ -44,9 +44,35 @@ export function toPublicAssignment(a: Assignment & { deo?: Person; verifier?: Pe
     seenAt: a.seenAt,
     completedAt: a.completedAt,
     cancelledAt: a.cancelledAt,
+    /** The verifier approved every entry (approved = target): ready for the admin to complete. */
+    allApprovedAt: a.allApprovedAt,
+    allApprovedBy: a.allApprovedBy,
     createdAt: a.createdAt,
   };
 }
+
+/** A verifier, like a DEO, works on one area at a time – until the admin completes it. */
+async function assertVerifierFree(tx: Prisma.TransactionClient, verifierId: string, exceptId?: string) {
+  const busy = await tx.assignment.findFirst({
+    where: { verifierId, status: "active", ...(exceptId ? { id: { not: exceptId } } : {}) },
+    select: { id: true, pincode: true },
+  });
+  if (busy) {
+    throw fieldError(
+      409,
+      "VERIFIER_BUSY",
+      "verifierId",
+      `${verifierId} is already verifying ${busy.id} (PIN ${busy.pincode}). A new area can be given only after that work is completed.`,
+    );
+  }
+}
+
+async function assertDeoFree(tx: Prisma.TransactionClient, deoId: string) {
+  const busy = await tx.assignment.findFirst({ where: { deoId, status: "active" }, select: { id: true, pincode: true } });
+  if (busy) throw fieldError(409, "DEO_BUSY", "deoId", `${deoId} already has active work (${busy.id}, PIN ${busy.pincode}). Choose a free operator.`);
+}
+
+const admins = () => prisma().user.findMany({ where: { role: "admin", status: "active" }, select: { id: true, email: true } });
 
 /**
  * Creates an assignment. Inside one transaction we take advisory locks on the
@@ -59,6 +85,7 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
     async (tx) => {
       await tx.$executeRaw`select pg_advisory_xact_lock(hashtext(${"assign:deo:" + v.deoId}))`;
       await tx.$executeRaw`select pg_advisory_xact_lock(hashtext(${"assign:pin:" + v.pincode}))`;
+      await tx.$executeRaw`select pg_advisory_xact_lock(hashtext(${"assign:vr:" + v.verifierId}))`;
 
       const deo = await tx.user.findUnique({ where: { id: v.deoId }, select: { id: true, role: true, status: true, name: true, email: true } });
       if (!deo || deo.role !== "deo") throw new HttpError(404, "Data Entry Operator not found.", "DEO_NOT_FOUND");
@@ -75,6 +102,7 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
       const vr = await tx.user.findUnique({ where: { id: v.verifierId }, select: { id: true, role: true, status: true, name: true, email: true } });
       if (!vr || vr.role !== "verifier") throw fieldError(404, "VERIFIER_NOT_FOUND", "verifierId", "Verifier not found.");
       if (vr.status !== "active") throw fieldError(409, "VERIFIER_NOT_ACTIVE", "verifierId", `${vr.id} is ${vr.status}. Choose an active verifier.`);
+      await assertVerifierFree(tx, vr.id);
 
       const pinTaken = await tx.assignment.findFirst({ where: { pincode: v.pincode, status: "active" }, select: { id: true, deoId: true } });
       if (pinTaken) {
@@ -141,7 +169,7 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
 /** Admin marks work completed (DEO becomes eligible again) or cancels it. */
 export async function updateAssignmentStatus(req: Request, adminId: string, id: string, status: "completed" | "cancelled") {
   const db = prisma();
-  const a = await db.assignment.findUnique({ where: { id }, include: { deo: { select: { id: true, email: true } } } });
+  const a = await db.assignment.findUnique({ where: { id }, include: { deo: { select: { id: true, email: true } }, verifier: { select: { id: true, email: true } } } });
   if (!a) throw new HttpError(404, "Assignment not found.", "NOT_FOUND");
   if (a.status !== "active") throw new HttpError(409, `This assignment is already ${a.status}.`, "NOT_ACTIVE");
   const now = new Date();
@@ -158,6 +186,16 @@ export async function updateAssignmentStatus(req: Request, adminId: string, id: 
         : `${id} (PIN ${a.pincode}) has been cancelled by the admin.`,
     link: "/deo/work",
   });
+  if (a.verifier) {
+    await notify(a.verifier, {
+      title: status === "completed" ? "Area completed" : "Area cancelled",
+      body:
+        status === "completed"
+          ? `${id} (PIN ${a.pincode}) has been marked completed. You are now free for a new area.`
+          : `${id} (PIN ${a.pincode}) has been cancelled by the admin.`,
+      link: "/verifier",
+    });
+  }
   return toPublicAssignment(updated);
 }
 
@@ -222,10 +260,20 @@ export async function changeVerifier(req: Request, adminId: string, id: string, 
   const vr = await db.user.findUnique({ where: { id: verifierId }, select: { id: true, role: true, status: true, name: true, email: true } });
   if (!vr || vr.role !== "verifier") throw fieldError(404, "VERIFIER_NOT_FOUND", "verifierId", "Verifier not found.");
   if (vr.status !== "active") throw fieldError(409, "VERIFIER_NOT_ACTIVE", "verifierId", `${vr.id} is ${vr.status}. Choose an active verifier.`);
-  const [updated, moved] = await db.$transaction([
-    db.assignment.update({ where: { id }, data: { verifierId: vr.id }, include: { deo: { select: { id: true, name: true, mobile: true } }, verifier: { select: { id: true, name: true, mobile: true } } } }),
-    db.entry.updateMany({ where: { assignmentId: id, status: "pending" }, data: { verifierId: vr.id, assignedAt: new Date() } }),
-  ]);
+  if (vr.id === a.verifierId) throw fieldError(409, "SAME_VERIFIER", "verifierId", `${vr.id} already verifies this area.`);
+  const oldVr = a.verifierId;
+  const [updated, moved] = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`select pg_advisory_xact_lock(hashtext(${"assign:vr:" + vr.id}))`;
+    await assertVerifierFree(tx, vr.id, id);
+    return Promise.all([
+      tx.assignment.update({ where: { id }, data: { verifierId: vr.id }, include: { deo: { select: { id: true, name: true, mobile: true } }, verifier: { select: { id: true, name: true, mobile: true } } } }),
+      tx.entry.updateMany({ where: { assignmentId: id, status: "pending" }, data: { verifierId: vr.id, assignedAt: new Date() } }),
+    ]);
+  });
+  if (oldVr) {
+    const old = await db.user.findUnique({ where: { id: oldVr }, select: { id: true, email: true } });
+    if (old) await notify(old, { title: "Area moved to another verifier", body: `${id} (PIN ${a.pincode}) is now verified by ${vr.name} (${vr.id}). You are free for a new area.`, link: "/verifier" });
+  }
   await audit(req, "assignment.verifier_changed", adminId, { assignmentId: id, verifierId: vr.id, movedEntries: moved.count });
   await notify(vr, { title: "New area to verify", body: `${id}: entries for PIN ${a.pincode} (${placeText(a)}) by ${a.deo.name} (${a.deo.id}).`, link: "/verifier" });
   await notify(a.deo, { title: "Verifier changed", body: `Your work ${id} will now be verified by ${vr.name} (${vr.id}).`, link: "/deo/work" });
@@ -237,12 +285,90 @@ export async function listVerifiers() {
   const db = prisma();
   const users = await db.user.findMany({ where: { role: "verifier" }, orderBy: { id: "asc" }, select: { id: true, name: true, mobile: true, status: true } });
   const [areas, pending] = await Promise.all([
-    db.assignment.groupBy({ by: ["verifierId"], where: { status: "active", verifierId: { not: null } }, _count: { _all: true } }),
+    db.assignment.findMany({ where: { status: "active", verifierId: { not: null } }, select: { id: true, pincode: true, verifierId: true }, orderBy: { createdAt: "asc" } }),
     db.entry.groupBy({ by: ["verifierId"], where: { status: "pending", verifierId: { not: null } }, _count: { _all: true } }),
   ]);
-  return users.map((u) => ({
-    ...u,
-    activeAreas: areas.find((x) => x.verifierId === u.id)?._count._all ?? 0,
-    pendingEntries: pending.find((x) => x.verifierId === u.id)?._count._all ?? 0,
-  }));
+  return users.map((u) => {
+    const mine = areas.filter((x) => x.verifierId === u.id);
+    return {
+      ...u,
+      activeAreas: mine.length,
+      /** The area this verifier is busy with (a new one can be given only after it is completed). */
+      currentAssignment: mine[0] ? { id: mine[0].id, pincode: mine[0].pincode } : null,
+      eligible: u.status === "active" && mine.length === 0,
+      pendingEntries: pending.find((x) => x.verifierId === u.id)?._count._all ?? 0,
+    };
+  });
+}
+
+/**
+ * Admin changes the DEO of active work. The new DEO must be active and free.
+ * Entries already made stay with the DEO who made them (pending ones are still
+ * paid to them when approved); REJECTED entries move to the new DEO to correct.
+ * The old DEO becomes free for new work.
+ */
+export async function changeDeo(req: Request, adminId: string, id: string, deoId: string) {
+  const db = prisma();
+  const a = await db.assignment.findUnique({ where: { id }, include: { deo: { select: { id: true, name: true, email: true } } } });
+  if (!a) throw new HttpError(404, "Assignment not found.", "NOT_FOUND");
+  if (a.status !== "active") throw new HttpError(409, `This assignment is already ${a.status}.`, "NOT_ACTIVE");
+  const deo = await db.user.findUnique({ where: { id: deoId }, select: { id: true, role: true, status: true, name: true, email: true } });
+  if (!deo || deo.role !== "deo") throw fieldError(404, "DEO_NOT_FOUND", "deoId", "Data Entry Operator not found.");
+  if (deo.status !== "active") throw fieldError(409, "DEO_NOT_ACTIVE", "deoId", `${deo.id} is ${deo.status}. Choose an active operator.`);
+  if (deo.id === a.deoId) throw fieldError(409, "SAME_DEO", "deoId", `${deo.id} already works on this area.`);
+
+  const [updated, moved] = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`select pg_advisory_xact_lock(hashtext(${"assign:deo:" + deo.id}))`;
+    await assertDeoFree(tx, deo.id);
+    return Promise.all([
+      tx.assignment.update({
+        where: { id },
+        data: { deoId: deo.id, seenAt: null },
+        include: { deo: { select: { id: true, name: true, mobile: true } }, verifier: { select: { id: true, name: true, mobile: true, email: true } } },
+      }),
+      tx.entry.updateMany({ where: { assignmentId: id, status: "rejected" }, data: { deoId: deo.id } }),
+    ]);
+  });
+  await audit(req, "assignment.deo_changed", adminId, { assignmentId: id, from: a.deoId, deoId: deo.id, movedEntries: moved.count });
+  const vr = updated.verifier;
+  await notify(
+    deo,
+    {
+      title: "New work assigned",
+      body: `${id}: entries for PIN ${a.pincode} (${placeText(a)}). Target ${a.target}, deadline ${a.deadline.toISOString().slice(0, 10)}.${moved.count ? ` ${moved.count} rejected entr${moved.count === 1 ? "y" : "ies"} to correct.` : ""}${vr ? ` Verifier: ${vr.name} (${vr.id}).` : ""}`,
+      link: "/deo/work",
+    },
+    assignmentEmail({ ...updated, deoName: deo.name, verifierName: vr?.name ?? "", verifierId: vr?.id ?? "" }),
+  );
+  await notify(a.deo, { title: "Work moved to another operator", body: `${id} (PIN ${a.pincode}) has been given to another operator. You are free for new work.`, link: "/deo/work" });
+  if (vr) await notify(vr, { title: "DEO changed", body: `${id} (PIN ${a.pincode}) will now be entered by ${deo.name} (${deo.id}).`, link: "/verifier" });
+  return { assignment: toPublicAssignment(updated), movedEntries: moved.count };
+}
+
+/**
+ * After an approval: when every entry of the work is approved (approved = target)
+ * the admin gets a notification, once, and the work shows "All approved by VR".
+ */
+export async function checkAllApproved(assignmentId: string, verifierId: string) {
+  const db = prisma();
+  const a = await db.assignment.findUnique({
+    where: { id: assignmentId },
+    select: { id: true, target: true, pincode: true, status: true, allApprovedAt: true, deo: { select: { id: true, name: true, email: true } } },
+  });
+  if (!a || a.status !== "active" || a.allApprovedAt) return false;
+  const approved = await db.entry.count({ where: { assignmentId, status: "approved" } });
+  if (approved < a.target) return false;
+  const r = await db.assignment.updateMany({ where: { id: assignmentId, allApprovedAt: null }, data: { allApprovedAt: new Date(), allApprovedBy: verifierId } });
+  if (r.count !== 1) return false; // someone else got here first
+  const vr = await db.user.findUnique({ where: { id: verifierId }, select: { name: true } });
+  const who = `${vr?.name ?? verifierId} (${verifierId})`;
+  for (const ad of await admins()) {
+    await notify(ad, {
+      title: `All entries approved – ${assignmentId}`,
+      body: `All ${approved} entries of ${assignmentId} (PIN ${a.pincode}, DEO ${a.deo.name} – ${a.deo.id}) are approved by verifier ${who}. Mark the work completed.`,
+      link: `/admin/assignments?q=${assignmentId}`,
+    });
+  }
+  await notify(a.deo, { title: "All your entries are approved", body: `All ${approved} entries of ${assignmentId} are approved by ${who}. The admin will now complete the work.`, link: "/deo/work" });
+  return true;
 }

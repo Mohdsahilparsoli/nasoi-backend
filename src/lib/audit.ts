@@ -28,6 +28,7 @@ export type AuditAction =
   | "settings.updated"
   | "entries.exported"
   | "assignment.verifier_changed"
+  | "assignment.deo_changed"
   | "profile.photo_changed"
   | "user.activated"
   | "user.deactivated"
