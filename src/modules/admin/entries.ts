@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
+import { FORMS, RECORD_LABEL, type FieldDef, type RecordType } from "../entries/forms.js";
 
 /* ------------------------------------------------------------------ */
 /* Filters (shared by the list and the export)                         */
@@ -14,6 +15,7 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a valid date").optiona
 
 export const entryFilterSchema = z.object({
   status: z.enum(["pending", "approved", "rejected", "all"]).optional(),
+  recordType: z.enum(["school", "college"]).optional(),
   pincode: z.string().trim().regex(/^\d{6}$/, "PIN code must be 6 digits").optional(),
   deoId: id(/^DEO\d+$/, "Invalid DEO ID"),
   verifierId: id(/^VR\d+$/, "Invalid Verifier ID"),
@@ -40,6 +42,7 @@ const istEnd = (d: string) => new Date(new Date(`${d}T00:00:00+05:30`).getTime()
 function buildWhere(f: EntryFilter, dateField: "verifiedAt" | "submittedAt"): Prisma.EntryWhereInput {
   const w: Prisma.EntryWhereInput = {};
   if (f.status && f.status !== "all") w.status = f.status;
+  if (f.recordType) w.recordType = f.recordType;
   if (f.pincode) w.pincode = f.pincode;
   if (f.deoId) w.deoId = f.deoId;
   // A verifier "owns" an approved entry if they approved it; otherwise the one it is assigned to.
@@ -54,8 +57,8 @@ function buildWhere(f: EntryFilter, dateField: "verifiedAt" | "submittedAt"): Pr
       {
         OR: [
           { id: { contains: f.q, mode: "insensitive" } },
-          { udiseCode: { startsWith: f.q } },
-          { schoolName: { contains: f.q, mode: "insensitive" } },
+          { recordCode: { startsWith: f.q.toUpperCase() } },
+          { recordName: { contains: f.q, mode: "insensitive" } },
         ],
       },
     ];
@@ -91,9 +94,9 @@ export async function listAdminEntries(f: EntryFilter) {
       assignmentId: e.assignmentId,
       taskType: e.assignment.taskType,
       area: { state: e.state, district: e.district, pincode: e.pincode },
-      udiseCode: e.udiseCode,
-      schoolName: e.schoolName,
-      lgdVillage: e.lgdVillage,
+      recordType: e.recordType,
+      code: e.recordCode,
+      name: e.recordName,
       status: e.status,
       rejectReason: e.rejectReason,
       deo: e.deo,
@@ -109,7 +112,7 @@ export async function listAdminEntries(f: EntryFilter) {
 export async function exportOptions() {
   const db = prisma();
   const where = { status: "approved" as const };
-  const [pins, deos, verifiers, assignments, districts, services, total] = await Promise.all([
+  const [pins, deos, verifiers, assignments, districts, services, total, types] = await Promise.all([
     db.entry.groupBy({ by: ["pincode"], where, _count: { _all: true }, orderBy: { pincode: "asc" } }),
     db.entry.groupBy({ by: ["deoId"], where, _count: { _all: true }, orderBy: { deoId: "asc" } }),
     db.entry.groupBy({ by: ["verifiedById"], where, _count: { _all: true }, orderBy: { verifiedById: "asc" } }),
@@ -119,6 +122,7 @@ export async function exportOptions() {
       select a.task_type, count(*) as n from entries e join assignments a on a.id = e.assignment_id
       where e.status = 'approved' group by 1 order by 1`,
     db.entry.count({ where }),
+    db.entry.groupBy({ by: ["recordType"], where, _count: { _all: true } }),
   ]);
   const ids = [...deos.map((d) => d.deoId), ...verifiers.map((v) => v.verifiedById).filter(Boolean)] as string[];
   const names = new Map((await db.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
@@ -130,6 +134,7 @@ export async function exportOptions() {
     assignments: assignments.map((a) => ({ value: a.assignmentId, count: a._count._all })),
     districts: districts.map((d) => ({ state: d.state, district: d.district, count: d._count._all })),
     services: services.map((s) => ({ value: s.task_type, count: Number(s.n) })),
+    recordTypes: types.map((t) => ({ value: t.recordType, label: RECORD_LABEL[t.recordType as RecordType] ?? t.recordType, count: t._count._all })),
   };
 }
 
@@ -142,26 +147,25 @@ type Row = Prisma.EntryGetPayload<{ include: typeof include }>;
 const fmt = (d: Date | null) =>
   d ? new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "short", hour12: false }).format(d) : "";
 
-const COLUMNS: { header: string; width: number; get: (e: Row) => string | number }[] = [
+type Column = { header: string; width: number; get: (e: Row) => string | number };
+
+const val = (e: Row, k: string) => {
+  const v = (e.data as Record<string, string | number> | null)?.[k];
+  return v === undefined || v === null ? "" : v;
+};
+
+/** Columns before the form fields. */
+const LEAD: Column[] = [
   { header: "Entry ID", width: 12, get: (e) => e.id },
   { header: "Assignment ID", width: 17, get: (e) => e.assignmentId },
-  { header: "Service", width: 28, get: (e) => e.assignment.taskType },
+  { header: "Service", width: 22, get: (e) => e.assignment.taskType },
+  { header: "Record Type", width: 10, get: (e) => RECORD_LABEL[e.recordType as RecordType] ?? e.recordType },
   { header: "State", width: 16, get: (e) => e.state },
   { header: "Educational District", width: 20, get: (e) => e.district },
   { header: "Pincode", width: 9, get: (e) => e.pincode },
-  { header: "UDISE Code", width: 14, get: (e) => e.udiseCode },
-  { header: "School Name", width: 36, get: (e) => e.schoolName },
-  { header: "Educational Block", width: 18, get: (e) => e.educationalBlock },
-  { header: "Rural / Urban", width: 10, get: (e) => e.ruralUrban },
-  { header: "Cluster", width: 16, get: (e) => e.cluster },
-  { header: "LGD Block", width: 16, get: (e) => e.lgdBlock },
-  { header: "LGD Panchayat", width: 16, get: (e) => e.lgdPanchayat },
-  { header: "LGD Village", width: 16, get: (e) => e.lgdVillage },
-  { header: "School Category", width: 30, get: (e) => e.schoolCategory },
-  { header: "School Management", width: 28, get: (e) => e.schoolManagement },
-  { header: "Year of Establishment", width: 12, get: (e) => e.yearEstablished },
-  { header: "Year of Recognition - Pri.", width: 12, get: (e) => e.yearRecognitionPri ?? "Not recognised" },
-  { header: "School Type", width: 14, get: (e) => e.schoolType },
+];
+/** Columns after the form fields. */
+const TAIL: Column[] = [
   { header: "DEO ID", width: 10, get: (e) => e.deoId },
   { header: "DEO Name", width: 20, get: (e) => e.deo.name },
   { header: "Verifier ID", width: 10, get: (e) => e.verifiedBy?.id ?? "" },
@@ -169,6 +173,19 @@ const COLUMNS: { header: string; width: number; get: (e: Row) => string | number
   { header: "Submitted On", width: 17, get: (e) => fmt(e.submittedAt) },
   { header: "Approved On", width: 17, get: (e) => fmt(e.verifiedAt) },
 ];
+const fieldColumn = (f: FieldDef): Column => ({
+  header: f.label,
+  width: Math.min(40, Math.max(10, f.label.length + 2, f.kind === "text" ? 18 : 0)),
+  get: (e) => val(e, f.key),
+});
+
+/** Columns for one record type, or for all types together (union of fields, de-duplicated by key). */
+function columnsFor(types: RecordType[]): Column[] {
+  const seen = new Set<string>();
+  const fields: FieldDef[] = [];
+  for (const t of types) for (const f of FORMS[t].fields) if (!seen.has(f.key)) { seen.add(f.key); fields.push(f); }
+  return [...LEAD, ...fields.map(fieldColumn), ...TAIL];
+}
 
 /** Stops spreadsheet apps from treating a cell as a formula (CSV injection). */
 const safeText = (v: string | number) => (typeof v === "string" && /^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
@@ -196,7 +213,7 @@ async function* approvedBatches(where: Prisma.EntryWhereInput) {
 
 function fileName(f: EntryFilter, ext: string) {
   const parts = ["nasoi-approved-entries"];
-  for (const v of [f.pincode && `pin-${f.pincode}`, f.deoId, f.verifierId, f.assignmentId, f.district, f.from && `from-${f.from}`, f.to && `to-${f.to}`]) {
+  for (const v of [f.recordType && `${f.recordType}s`, f.pincode && `pin-${f.pincode}`, f.deoId, f.verifierId, f.assignmentId, f.district, f.from && `from-${f.from}`, f.to && `to-${f.to}`]) {
     if (v) parts.push(String(v).toLowerCase().replace(/[^a-z0-9-]+/g, "-"));
   }
   parts.push(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
@@ -205,6 +222,7 @@ function fileName(f: EntryFilter, ext: string) {
 
 export async function exportApproved(req: Request, res: Response, adminId: string, f: EntryFilter, format: "csv" | "xlsx") {
   const where = buildWhere({ ...f, status: "approved" }, "verifiedAt");
+  const types: RecordType[] = f.recordType ? [f.recordType] : ["school", "college"];
   const name = fileName(f, format);
   res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
   res.setHeader("Cache-Control", "no-store");
@@ -213,28 +231,36 @@ export async function exportApproved(req: Request, res: Response, adminId: strin
   if (format === "csv") {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     // BOM so Excel opens Hindi / special characters correctly.
-    res.write("﻿" + ["S.No", ...COLUMNS.map((c) => c.header)].map(csvCell).join(",") + "\r\n");
+    // One CSV: the chosen type's columns, or all fields of both types when exporting everything.
+    const cols = columnsFor(types);
+    res.write("\uFEFF" + ["S.No", ...cols.map((c) => c.header)].map(csvCell).join(",") + "\r\n");
     for await (const rows of approvedBatches(where)) {
-      res.write(rows.map((e) => [++count, ...COLUMNS.map((c) => c.get(e))].map(csvCell).join(",")).join("\r\n") + "\r\n");
+      res.write(rows.map((e) => [++count, ...cols.map((c) => c.get(e))].map(csvCell).join(",")).join("\r\n") + "\r\n");
     }
     res.end();
   } else {
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
     wb.creator = "NASOI";
-    const ws = wb.addWorksheet("Approved Entries", { views: [{ state: "frozen", ySplit: 1 }] });
-    ws.columns = [{ header: "S.No", key: "sno", width: 6 }, ...COLUMNS.map((c, i) => ({ header: c.header, key: `c${i}`, width: c.width }))];
-    const head = ws.getRow(1);
-    head.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    head.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1C3F94" } };
-    head.commit();
-    for await (const rows of approvedBatches(where)) {
-      for (const e of rows) {
-        // Codes are written as text so leading zeros (UDISE, PIN) are kept.
-        ws.addRow([++count, ...COLUMNS.map((c) => safeText(c.get(e)))]).commit();
+    // Excel: one sheet per record type (Schools / Colleges), each with its own columns.
+    for (const t of types) {
+      const cols = columnsFor([t]);
+      const ws = wb.addWorksheet(t === "school" ? "Schools" : "Colleges", { views: [{ state: "frozen", ySplit: 1 }] });
+      ws.columns = [{ header: "S.No", key: "sno", width: 6 }, ...cols.map((c, i) => ({ header: c.header, key: `c${i}`, width: c.width }))];
+      const head = ws.getRow(1);
+      head.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      head.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1C3F94" } };
+      head.commit();
+      let n = 0;
+      for await (const rows of approvedBatches({ ...where, recordType: t })) {
+        for (const e of rows) {
+          count++;
+          // Codes are written as text so leading zeros (UDISE, PIN) are kept.
+          ws.addRow([++n, ...cols.map((c) => safeText(c.get(e)))]).commit();
+        }
       }
+      ws.commit();
     }
-    ws.commit();
     await wb.commit();
   }
   await audit(req, "entries.exported", adminId, { format, count, ...Object.fromEntries(Object.entries(f).filter(([, v]) => v).map(([k, v]) => [k, String(v)])) });

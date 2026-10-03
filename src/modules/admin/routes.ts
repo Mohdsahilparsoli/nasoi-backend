@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { noStore, requireAuth } from "../../middleware/security.js";
-import { createAssignmentSchema, updateAssignmentSchema } from "../assignments/schema.js";
-import { createAssignment, listAssignments, updateAssignmentStatus } from "../assignments/service.js";
+import { changeVerifierSchema, createAssignmentSchema, updateAssignmentSchema } from "../assignments/schema.js";
+import { changeVerifier, createAssignment, listAssignments, listVerifiers, updateAssignmentStatus } from "../assignments/service.js";
 import { audit } from "../../lib/audit.js";
 import { getSettings, settingsSchema, updateSettings } from "../../lib/settings.js";
 import { exportApproved, exportOptions, listAdminEntries, parseFilter } from "./entries.js";
@@ -40,6 +40,17 @@ adminRouter.post("/assignments", async (req, res) => {
 adminRouter.patch("/assignments/:id", async (req, res) => {
   const { status } = updateAssignmentSchema.parse(req.body);
   res.json({ assignment: await updateAssignmentStatus(req, req.auth!.sub, String(req.params.id), status) });
+});
+
+/** PATCH /admin/assignments/:id/verifier – change the verifier of an area. */
+adminRouter.patch("/assignments/:id/verifier", async (req, res) => {
+  const { verifierId } = changeVerifierSchema.parse(req.body);
+  res.json(await changeVerifier(req, req.auth!.sub, String(req.params.id), verifierId));
+});
+
+/** GET /admin/verifiers – verifiers with their active areas and pending entries. */
+adminRouter.get("/verifiers", async (_req, res) => {
+  res.json({ verifiers: await listVerifiers() });
 });
 
 /** Portal settings: verifier rate, default DEO rate, payout window. */

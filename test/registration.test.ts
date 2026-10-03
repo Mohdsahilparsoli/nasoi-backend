@@ -231,11 +231,13 @@ describe("registration", () => {
     assert.equal(f.headers.get("content-type"), "image/png");
     assert.ok(Buffer.from(await f.arrayBuffer()).subarray(1, 4).toString() === "PNG", "decrypted file is the original PNG");
 
-    // another DEO cannot; a verifier can
+    // another DEO and a verifier cannot (only the owner and the admin)
     const other = (await (await login("DEO127", "Abcd@2026")).json()).accessToken;
     assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`, { headers: { authorization: `Bearer ${other}` } })).status, 404);
     const vr = (await (await login("VR101", "Abcd@2026")).json()).accessToken;
-    assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`, { headers: { authorization: `Bearer ${vr}` } })).status, 200);
+    assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`, { headers: { authorization: `Bearer ${vr}` } })).status, 404);
+    const adm = (await (await login("ADMIN", "Admin@2026")).json()).accessToken;
+    assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`, { headers: { authorization: `Bearer ${adm}` } })).status, 200);
     assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`)).status, 401);
 
     // updates

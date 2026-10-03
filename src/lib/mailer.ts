@@ -29,4 +29,4 @@ export async function sendMail(msg: { to: string; subject: string; text: string;
   await mailer().sendMail({ from: config().SMTP_FROM, ...msg });
 }
 
-export { assignmentEmail, registrationEmail, resetPasswordEmail } from "./email-templates.js";
+export { assignmentEmail, registrationEmail, resetPasswordEmail, verifierAreaEmail } from "./email-templates.js";

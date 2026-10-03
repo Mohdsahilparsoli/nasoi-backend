@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import { noStore, requireAuth } from "../../middleware/security.js";
 import { myAssignments } from "../assignments/service.js";
-import { entrySchema } from "../entries/schema.js";
+import { publicForms } from "../entries/forms.js";
 import { createEntry, getMyEntry, listMyEntries, mySummary, updateEntry } from "../entries/service.js";
 
 /** Notifications for the logged-in user (any role). */
@@ -55,10 +55,18 @@ meRouter.get("/entries/:id", async (req, res) => {
 
 /** POST /api/v1/me/entries – new school record in the current assignment. */
 meRouter.post("/entries", async (req, res) => {
-  res.status(201).json({ entry: await createEntry(req, req.auth!.sub, entrySchema.parse(req.body)) });
+  res.status(201).json({ entry: await createEntry(req, req.auth!.sub, req.body) });
 });
 
 /** PATCH /api/v1/me/entries/:id – correct a pending entry, or fix and resubmit a rejected one. */
 meRouter.patch("/entries/:id", async (req, res) => {
-  res.json({ entry: await updateEntry(req, req.auth!.sub, entryId(req.params.id), entrySchema.parse(req.body)) });
+  res.json({ entry: await updateEntry(req, req.auth!.sub, entryId(req.params.id), req.body) });
+});
+
+/** GET /api/v1/entry-forms – school / college form definitions (fields, options, rules). Any logged-in user. */
+export const formsRouter = Router();
+formsRouter.use(requireAuth());
+formsRouter.get("/", (_req, res) => {
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.json({ forms: publicForms() });
 });

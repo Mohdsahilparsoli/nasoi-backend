@@ -3,8 +3,12 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
-import { decryptBytes, encryptText } from "../../lib/crypto.js";
-import { HttpError } from "../../lib/http.js";
+import { randomBytes } from "node:crypto";
+import multer from "multer";
+import { decryptBytes, encryptBytes, encryptText } from "../../lib/crypto.js";
+import { HttpError, clientIp } from "../../lib/http.js";
+import { canSeePhoto } from "../../lib/people.js";
+import { MAX_UPLOAD_BYTES, sha256, sniff } from "../registration/uploads.js";
 import { noStore, requireAuth } from "../../middleware/security.js";
 import { RX } from "../registration/schema.js";
 
@@ -99,16 +103,72 @@ profileRouter.patch("/me/bank", requireAuth(), async (req, res) => {
 export const documentsRouter = Router();
 documentsRouter.use(noStore);
 
-/** GET /api/v1/documents/:id – the owner, a verifier or an admin can view a document. */
+/** GET /api/v1/documents/:id – only the owner or an admin can view a document (Aadhaar, bank proof …). */
 documentsRouter.get("/:id", requireAuth(), async (req, res) => {
   const id = z.string().uuid().safeParse(req.params.id);
   if (!id.success) throw new HttpError(404, "Document not found.", "NOT_FOUND");
   const d = await prisma().document.findUnique({ where: { id: id.data } });
   const me = req.auth!;
-  if (!d || !d.attachedAt || (d.userId !== me.sub && me.role === "deo")) throw new HttpError(404, "Document not found.", "NOT_FOUND");
+  if (!d || !d.attachedAt || (d.userId !== me.sub && me.role !== "admin")) throw new HttpError(404, "Document not found.", "NOT_FOUND");
   if (d.userId !== me.sub) await audit(req, "document.viewed", me.sub, { documentId: d.id, owner: d.userId ?? "" });
   res.setHeader("Content-Type", d.mimeType);
   res.setHeader("Content-Disposition", `inline; filename="${d.fileName}"`);
   res.setHeader("Cache-Control", "private, no-store");
+  res.send(decryptBytes(d.data));
+});
+
+/* ---------- Profile photo ---------- */
+
+const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0 } });
+
+/** POST /api/v1/profile/me/photo (multipart "file") – replace my profile photo (JPG / PNG, max 2 MB). */
+profileRouter.post("/me/photo", requireAuth(), async (req, res) => {
+  await new Promise<void>((resolve, reject) =>
+    photoUpload.single("file")(req, res, (err: unknown) =>
+      !err ? resolve() : reject(err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE" ? new HttpError(413, "Photo must be under 2 MB.", "FILE_TOO_LARGE") : new HttpError(400, "Upload one photo.", "BAD_UPLOAD")),
+    ),
+  );
+  const file = req.file;
+  if (!file?.buffer.length) throw new HttpError(400, "Please choose a photo.", "NO_FILE");
+  const type = sniff(file.buffer);
+  if (type !== "jpg" && type !== "png") throw new HttpError(415, "Only JPG or PNG photos are allowed.", "BAD_FILE_TYPE");
+  const userId = req.auth!.sub;
+  const db = prisma();
+  const doc = await db.$transaction(async (tx) => {
+    await tx.document.deleteMany({ where: { userId, kind: "photo" } });
+    return tx.document.create({
+      data: {
+        kind: "photo",
+        userId,
+        attachedAt: new Date(),
+        fileName: `photo.${type}`,
+        mimeType: type === "jpg" ? "image/jpeg" : "image/png",
+        size: file.buffer.length,
+        sha256: sha256(file.buffer),
+        data: new Uint8Array(encryptBytes(file.buffer)),
+        // Attached straight away, so the one-time upload token is never used: store a random unusable hash.
+        uploadTokenHash: sha256(randomBytes(32)),
+        ip: clientIp(req),
+      },
+      select: { id: true, kind: true, fileName: true, mimeType: true, size: true, createdAt: true },
+    });
+  });
+  await audit(req, "profile.photo_changed", userId);
+  res.status(201).json({ document: doc });
+});
+
+/**
+ * GET /api/v1/users/:id/photo – profile photo. Visible to the person, the admin,
+ * and the DEO / verifier who work on the same area.
+ */
+export const usersRouter = Router();
+usersRouter.get("/:id/photo", requireAuth(), async (req, res) => {
+  const id = z.string().regex(/^[A-Z]{2,5}\d{0,8}$/).safeParse(String(req.params.id).toUpperCase());
+  if (!id.success || !(await canSeePhoto(req.auth!, id.data))) throw new HttpError(404, "Photo not found.", "NOT_FOUND");
+  const d = await prisma().document.findFirst({ where: { userId: id.data, kind: "photo", attachedAt: { not: null } }, orderBy: { createdAt: "desc" } });
+  if (!d) throw new HttpError(404, "Photo not found.", "NOT_FOUND");
+  res.setHeader("Content-Type", d.mimeType);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.setHeader("ETag", `"${d.sha256.slice(0, 16)}"`);
   res.send(decryptBytes(d.data));
 });

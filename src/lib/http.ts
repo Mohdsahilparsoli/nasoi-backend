@@ -11,6 +11,15 @@ export class HttpError extends Error {
   ) {
     super(message);
   }
+  /** Optional: the form field this error belongs to. */
+  fields?: { path: string; message: string }[];
+}
+
+/** An HttpError shown on one form field (e.g. a duplicate UDISE code). */
+export function fieldError(status: number, code: string, path: string, message: string) {
+  const e = new HttpError(status, message, code);
+  e.fields = [{ path, message }];
+  return e;
 }
 
 export function notFound(_req: Request, res: Response) {
@@ -21,7 +30,7 @@ export function notFound(_req: Request, res: Response) {
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   if (err instanceof HttpError) {
     for (const [k, v] of Object.entries(err.headers)) res.setHeader(k, v);
-    return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+    return res.status(err.status).json({ error: { code: err.code, message: err.message, ...(err.fields ? { fields: err.fields } : {}) } });
   }
   if (err instanceof ZodError) {
     return res.status(400).json({

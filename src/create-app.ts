@@ -6,10 +6,10 @@ import { prisma } from "./db.js";
 import { clientIp, errorHandler, notFound } from "./lib/http.js";
 import { CLIENT_HEADER, csrfGuard, securityHeaders } from "./middleware/security.js";
 import { authRouter } from "./modules/auth/routes.js";
-import { documentsRouter, profileRouter } from "./modules/profile/routes.js";
+import { documentsRouter, profileRouter, usersRouter } from "./modules/profile/routes.js";
 import { registrationRouter } from "./modules/registration/routes.js";
 import { adminRouter } from "./modules/admin/routes.js";
-import { meRouter, notificationsRouter } from "./modules/notifications/routes.js";
+import { formsRouter, meRouter, notificationsRouter } from "./modules/notifications/routes.js";
 import { verifierRouter } from "./modules/verifier/routes.js";
 
 export function createApp() {
@@ -51,9 +51,11 @@ export function createApp() {
   app.use("/api/v1/registrations", registrationRouter);
   app.use("/api/v1/profile", profileRouter);
   app.use("/api/v1/documents", documentsRouter);
+  app.use("/api/v1/users", usersRouter);
   app.use("/api/v1/admin", adminRouter);
   app.use("/api/v1/notifications", notificationsRouter);
   app.use("/api/v1/me", meRouter);
+  app.use("/api/v1/entry-forms", formsRouter);
   app.use("/api/v1/verifier", verifierRouter);
 
   app.use(notFound);

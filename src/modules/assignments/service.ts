@@ -2,8 +2,9 @@ import type { Request } from "express";
 import { prisma } from "../../db.js";
 import { Prisma, type Assignment } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
-import { HttpError } from "../../lib/http.js";
-import { assignmentEmail } from "../../lib/mailer.js";
+import { HttpError, fieldError } from "../../lib/http.js";
+import { personCards } from "../../lib/people.js";
+import { assignmentEmail, verifierAreaEmail } from "../../lib/mailer.js";
 import { notify } from "../../lib/notify.js";
 import { progressFor } from "../entries/service.js";
 import type { CreateAssignmentInput } from "./schema.js";
@@ -17,14 +18,21 @@ export async function withProgress<T extends { id: string }>(list: T[]): Promise
   return list.map((a) => ({ ...a, progress: map.get(a.id)! }));
 }
 
-export function toPublicAssignment(a: Assignment & { deo?: { id: string; name: string; mobile: string | null } }) {
+type Person = { id: string; name: string; mobile: string | null };
+
+/** Full shape for the admin (includes both amounts). DEO responses strip the amounts. */
+export function toPublicAssignment(a: Assignment & { deo?: Person; verifier?: Person | null }) {
   return {
     id: a.id,
     deoId: a.deoId,
     deo: a.deo ? { id: a.deo.id, name: a.deo.name, mobile: a.deo.mobile } : undefined,
+    verifierId: a.verifierId,
+    verifier: a.verifier ? { id: a.verifier.id, name: a.verifier.name, mobile: a.verifier.mobile } : null,
     taskType: a.taskType,
+    recordType: a.recordType === "college" ? ("college" as const) : ("school" as const),
     target: a.target,
     ratePerEntry: a.ratePerEntry,
+    verifierRate: a.verifierRate,
     area: { state: a.state, district: a.district, block: a.block, village: a.village, pincode: a.pincode },
     deadline: a.deadline.toISOString().slice(0, 10),
     instructions: a.instructions,
@@ -60,6 +68,10 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
           "DEO_BUSY",
         );
       }
+      const vr = await tx.user.findUnique({ where: { id: v.verifierId }, select: { id: true, role: true, status: true, name: true, email: true } });
+      if (!vr || vr.role !== "verifier") throw fieldError(404, "VERIFIER_NOT_FOUND", "verifierId", "Verifier not found.");
+      if (vr.status !== "active") throw fieldError(409, "VERIFIER_BLOCKED", "verifierId", `${vr.id} is blocked. Choose an active verifier.`);
+
       const pinTaken = await tx.assignment.findFirst({ where: { pincode: v.pincode, status: "active" }, select: { id: true, deoId: true } });
       if (pinTaken) {
         throw new HttpError(409, `PIN code ${v.pincode} is already assigned to ${pinTaken.deoId} (${pinTaken.id}).`, "PIN_BUSY");
@@ -78,6 +90,9 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
           deoId: deo.id,
           assignedById: adminId,
           taskType: v.taskType,
+          recordType: v.recordType,
+          verifierId: vr.id,
+          verifierRate: v.verifierRate,
           target: v.target,
           ratePerEntry: v.ratePerEntry,
           state: v.state,
@@ -89,23 +104,34 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
           instructions: v.instructions,
         },
       });
-      return { a, deo };
+      return { a, deo, vr };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000 },
   );
 
-  const { a, deo } = result;
-  await audit(req, "assignment.created", adminId, { assignmentId: a.id, deoId: deo.id, pincode: a.pincode });
+  const { a, deo, vr } = result;
+  const what = a.recordType === "college" ? "College" : "School";
+  await audit(req, "assignment.created", adminId, { assignmentId: a.id, deoId: deo.id, verifierId: vr.id, pincode: a.pincode });
   const { emailed } = await notify(
     deo,
     {
       title: "New work assigned",
-      body: `${a.taskType} for PIN ${a.pincode} (${a.village}, ${a.district}). Target ${a.target} entries, deadline ${a.deadline.toISOString().slice(0, 10)}.`,
+      body: `${what} entries (${a.taskType}) for PIN ${a.pincode} (${a.village}, ${a.district}). Target ${a.target} entries, deadline ${a.deadline.toISOString().slice(0, 10)}. Verifier: ${vr.name} (${vr.id}).`,
       link: "/deo/work",
     },
-    assignmentEmail({ ...a, deoName: deo.name }),
+    assignmentEmail({ ...a, deoName: deo.name, verifierName: vr.name, verifierId: vr.id }),
   );
-  return { assignment: toPublicAssignment(a), emailed };
+  // The verifier of the area is told too.
+  await notify(
+    vr,
+    {
+      title: "New area to verify",
+      body: `${a.id}: ${what.toLowerCase()} entries for PIN ${a.pincode} (${a.village}, ${a.district}) by ${deo.name} (${deo.id}).`,
+      link: "/verifier",
+    },
+    verifierAreaEmail({ ...a, verifierName: vr.name, deoName: deo.name, deoId: deo.id }),
+  );
+  return { assignment: toPublicAssignment({ ...a, deo: undefined, verifier: { id: vr.id, name: vr.name, mobile: null } }), emailed };
 }
 
 /** Admin marks work completed (DEO becomes eligible again) or cancels it. */
@@ -141,6 +167,7 @@ export async function listAssignments(filter: { status?: string; deoId?: string;
       { id: { contains: q, mode: "insensitive" } },
       { pincode: { startsWith: q } },
       { deoId: { contains: q, mode: "insensitive" } },
+      { verifierId: { contains: q, mode: "insensitive" } },
       { village: { contains: q, mode: "insensitive" } },
       { district: { contains: q, mode: "insensitive" } },
     ];
@@ -149,7 +176,7 @@ export async function listAssignments(filter: { status?: string; deoId?: string;
     where,
     orderBy: { createdAt: "desc" },
     take: 500,
-    include: { deo: { select: { id: true, name: true, mobile: true } } },
+    include: { deo: { select: { id: true, name: true, mobile: true } }, verifier: { select: { id: true, name: true, mobile: true } } },
   });
   return withProgress(rows.map(toPublicAssignment));
 }
@@ -167,13 +194,51 @@ export async function myAssignments(deoId: string, markSeen = false) {
     await db.assignment.update({ where: { id: current.id }, data: { seenAt: new Date() } });
     current.seenAt = new Date();
   }
-  // The DEO does not see the per-entry rate.
+  // The DEO sees the area's verifier (ID, name, mobile, photo) but never the amounts.
+  const cards = await personCards(rows.map((r) => r.verifierId));
   const all = await withProgress(rows.map((r) => {
-    const { ratePerEntry: _r, ...a } = toPublicAssignment(r);
-    return a;
+    const { ratePerEntry: _r, verifierRate: _v, verifier: _p, ...a } = toPublicAssignment(r);
+    return { ...a, verifier: r.verifierId ? (cards.get(r.verifierId) ?? null) : null };
   }));
   return {
     current: current ? all.find((a) => a.id === current.id)! : null,
     history: all.filter((a) => a.status !== "active"),
   };
+}
+
+/**
+ * Admin changes the verifier of an area. Pending entries of that work move to
+ * the new verifier; already verified entries keep their history.
+ */
+export async function changeVerifier(req: Request, adminId: string, id: string, verifierId: string) {
+  const db = prisma();
+  const a = await db.assignment.findUnique({ where: { id }, include: { deo: { select: { id: true, name: true, email: true } } } });
+  if (!a) throw new HttpError(404, "Assignment not found.", "NOT_FOUND");
+  if (a.status !== "active") throw new HttpError(409, `This assignment is already ${a.status}.`, "NOT_ACTIVE");
+  const vr = await db.user.findUnique({ where: { id: verifierId }, select: { id: true, role: true, status: true, name: true, email: true } });
+  if (!vr || vr.role !== "verifier") throw fieldError(404, "VERIFIER_NOT_FOUND", "verifierId", "Verifier not found.");
+  if (vr.status !== "active") throw fieldError(409, "VERIFIER_BLOCKED", "verifierId", `${vr.id} is blocked. Choose an active verifier.`);
+  const [updated, moved] = await db.$transaction([
+    db.assignment.update({ where: { id }, data: { verifierId: vr.id }, include: { deo: { select: { id: true, name: true, mobile: true } }, verifier: { select: { id: true, name: true, mobile: true } } } }),
+    db.entry.updateMany({ where: { assignmentId: id, status: "pending" }, data: { verifierId: vr.id, assignedAt: new Date() } }),
+  ]);
+  await audit(req, "assignment.verifier_changed", adminId, { assignmentId: id, verifierId: vr.id, movedEntries: moved.count });
+  await notify(vr, { title: "New area to verify", body: `${id}: entries for PIN ${a.pincode} (${a.village}, ${a.district}) by ${a.deo.name} (${a.deo.id}).`, link: "/verifier" });
+  await notify(a.deo, { title: "Verifier changed", body: `Your work ${id} will now be verified by ${vr.name} (${vr.id}).`, link: "/deo/work" });
+  return { assignment: toPublicAssignment(updated), movedEntries: moved.count };
+}
+
+/** Verifiers for the Assign Work dropdown, with their current load. */
+export async function listVerifiers() {
+  const db = prisma();
+  const users = await db.user.findMany({ where: { role: "verifier" }, orderBy: { id: "asc" }, select: { id: true, name: true, mobile: true, status: true } });
+  const [areas, pending] = await Promise.all([
+    db.assignment.groupBy({ by: ["verifierId"], where: { status: "active", verifierId: { not: null } }, _count: { _all: true } }),
+    db.entry.groupBy({ by: ["verifierId"], where: { status: "pending", verifierId: { not: null } }, _count: { _all: true } }),
+  ]);
+  return users.map((u) => ({
+    ...u,
+    activeAreas: areas.find((x) => x.verifierId === u.id)?._count._all ?? 0,
+    pendingEntries: pending.find((x) => x.verifierId === u.id)?._count._all ?? 0,
+  }));
 }

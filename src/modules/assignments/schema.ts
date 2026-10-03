@@ -10,6 +10,9 @@ export const TASK_TYPES = [
   "Academic Management Services",
 ] as const;
 
+/** Services that can be assigned now – the others are "Coming Soon". */
+export const ACTIVE_TASK_TYPES = ["Data Entry Services"] as const;
+
 /** Today's date in India (YYYY-MM-DD). */
 export function todayIST() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
@@ -21,9 +24,12 @@ const text = (label: string, min: number, max: number) =>
 export const createAssignmentSchema = z
   .object({
     deoId: z.string().trim().min(1, "Select a Data Entry Operator").max(20).transform((v) => v.toUpperCase()),
-    taskType: z.enum(TASK_TYPES, { error: "Select the service" }),
+    taskType: z.enum(TASK_TYPES, { error: "Select the service" }).refine((t) => (ACTIVE_TASK_TYPES as readonly string[]).includes(t), "This service is coming soon"),
+    recordType: z.enum(["school", "college"], { error: "Choose School or College" }),
+    verifierId: z.string().trim().min(1, "Select a Verifier for this area").max(20).transform((v) => v.toUpperCase()),
+    verifierRate: z.coerce.number({ error: "Enter the verifier amount" }).int("Enter a whole number").min(0, "Amount cannot be negative").max(1000, "Amount is too high"),
     target: z.coerce.number({ error: "Enter the number of entries" }).int("Enter a whole number").min(1, "Target must be at least 1").max(100000, "Target is too large"),
-    ratePerEntry: z.coerce.number({ error: "Enter the rate" }).int("Enter a whole number").min(1, "Rate must be at least ₹1").max(1000, "Rate is too high"),
+    ratePerEntry: z.coerce.number({ error: "Enter the DEO amount" }).int("Enter a whole number").min(1, "Amount must be at least ₹1").max(1000, "Amount is too high"),
     state: z.string().refine((s) => s in STATE_DISTRICTS, "Select a valid state / union territory"),
     district: z.string().min(1, "Select district"),
     block: text("Block / Tehsil", 2, 60),
@@ -43,6 +49,10 @@ export const createAssignmentSchema = z
   });
 
 export type CreateAssignmentInput = z.infer<typeof createAssignmentSchema>;
+
+export const changeVerifierSchema = z.object({
+  verifierId: z.string().trim().min(1, "Select a Verifier").max(20).transform((v) => v.toUpperCase()),
+});
 
 export const updateAssignmentSchema = z.object({
   status: z.enum(["completed", "cancelled"], { error: "Choose completed or cancelled" }),

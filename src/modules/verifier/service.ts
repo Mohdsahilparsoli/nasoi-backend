@@ -6,6 +6,8 @@ import { audit } from "../../lib/audit.js";
 import { HttpError } from "../../lib/http.js";
 import { notify } from "../../lib/notify.js";
 import { getSettings } from "../../lib/settings.js";
+import { personCards } from "../../lib/people.js";
+import { withProgress } from "../assignments/service.js";
 import { toPublicEntry } from "../entries/service.js";
 
 export const decisionSchema = z
@@ -20,19 +22,22 @@ export const decisionSchema = z
   });
 
 const withContext = {
-  deo: { select: { id: true, name: true } },
-  assignment: { select: { id: true, taskType: true, village: true, block: true } },
+  assignment: { select: { id: true, taskType: true, recordType: true, village: true, block: true } },
 } satisfies Prisma.EntryInclude;
 
 type EntryWithContext = Prisma.EntryGetPayload<{ include: typeof withContext }>;
 
-const toVerifierEntry = (e: EntryWithContext) => ({
-  ...toPublicEntry(e),
-  deo: e.deo,
-  assignment: e.assignment,
-  verifierId: e.verifierId,
-  assignedAt: e.assignedAt,
-});
+/** Adds the DEO's basic card (ID, name, mobile, photo) and the work area to each entry. */
+async function toVerifierEntries(rows: EntryWithContext[]) {
+  const cards = await personCards(rows.map((e) => e.deoId));
+  return rows.map((e) => ({
+    ...toPublicEntry(e),
+    deo: cards.get(e.deoId) ?? { id: e.deoId, name: e.deoId, mobile: null, hasPhoto: false },
+    assignment: e.assignment,
+    verifierId: e.verifierId,
+    assignedAt: e.assignedAt,
+  }));
+}
 
 /**
  * Pending entries that have no verifier yet (they were submitted before any
@@ -42,8 +47,10 @@ export async function claimOrphans(verifierId: string) {
   await prisma().$executeRaw`
     update entries set verifier_id = ${verifierId}, assigned_at = now()
     where id in (
-      select id from entries where status = 'pending' and verifier_id is null
-      order by submitted_at limit 200 for update skip locked)`;
+      select e.id from entries e join assignments a on a.id = e.assignment_id
+      where e.status = 'pending' and e.verifier_id is null
+        and (a.verifier_id is null or a.verifier_id = ${verifierId})
+      order by e.submitted_at limit 200 for update of e skip locked)`;
 }
 
 /** Dashboard cards + month-wise income (IST). Totals only – the per-entry rate is not shown to verifiers. */
@@ -87,7 +94,7 @@ export async function verifierEntries(verifierId: string, view: "pending" | "all
     include: withContext,
     take: 2000,
   });
-  return rows.map(toVerifierEntry);
+  return toVerifierEntries(rows);
 }
 
 export async function verifierEntry(verifierId: string, id: string) {
@@ -95,12 +102,12 @@ export async function verifierEntry(verifierId: string, id: string) {
   const decidedByMe = e && (await prisma().verification.count({ where: { entryId: id, verifierId } })) > 0;
   if (!e || (e.verifierId !== verifierId && !decidedByMe)) throw new HttpError(404, "Entry not found.", "NOT_FOUND");
   const history = await prisma().verification.findMany({ where: { entryId: id }, orderBy: { createdAt: "asc" }, select: { decision: true, reason: true, createdAt: true, verifierId: true } });
-  return { ...toVerifierEntry(e), history };
+  const [entry] = await toVerifierEntries([e]);
+  return { ...entry, history };
 }
 
 /** Approve or reject a pending entry assigned to this verifier. */
 export async function decide(req: Request, verifierId: string, id: string, v: z.infer<typeof decisionSchema>) {
-  const { verifierRate } = await getSettings();
   const reason = v.decision === "rejected" ? v.reason! : null;
   const entry = await prisma().$transaction(async (tx) => {
     const now = new Date();
@@ -114,8 +121,10 @@ export async function decide(req: Request, verifierId: string, id: string, v: z.
       if (!e || e.verifierId !== verifierId) throw new HttpError(404, "Entry not found.", "NOT_FOUND");
       throw new HttpError(409, `This entry is already ${e.status}.`, "ALREADY_VERIFIED");
     }
-    const e = await tx.entry.findUniqueOrThrow({ where: { id }, include: { deo: { select: { id: true, email: true } } } });
-    await tx.verification.create({ data: { entryId: id, verifierId, deoId: e.deoId, decision: v.decision, reason, rate: verifierRate } });
+    const e = await tx.entry.findUniqueOrThrow({ where: { id }, include: { deo: { select: { id: true, email: true } }, assignment: { select: { verifierRate: true } } } });
+    // Amount for the verifier: set by the admin on the work (area); falls back to the default in Settings.
+    const rate = e.assignment.verifierRate ?? (await getSettings()).verifierRate;
+    await tx.verification.create({ data: { entryId: id, verifierId, deoId: e.deoId, decision: v.decision, reason, rate } });
     return e;
   });
 
@@ -124,7 +133,7 @@ export async function decide(req: Request, verifierId: string, id: string, v: z.
     // In-app only: a rejection needs action, but an e-mail for every entry would be too much.
     await notify(entry.deo, {
       title: "Entry rejected – please correct",
-      body: `${id} (${entry.schoolName}) was rejected: ${reason}`,
+      body: `${id} (${entry.recordName}) was rejected: ${reason}`,
       link: `/deo/entries/${id}`,
     });
   }
@@ -137,14 +146,36 @@ export async function verifierHistory(verifierId: string, decision?: string) {
     where: { verifierId, ...(decision === "approved" || decision === "rejected" ? { decision } : {}) },
     orderBy: { createdAt: "desc" },
     take: 2000,
-    include: { entry: { select: { id: true, udiseCode: true, schoolName: true, pincode: true, status: true, deo: { select: { id: true, name: true } } } } },
+    include: { entry: { select: { id: true, recordType: true, recordCode: true, recordName: true, pincode: true, status: true, deo: { select: { id: true, name: true } } } } },
   });
   return rows.map((r) => ({
     id: r.id,
     decision: r.decision,
     reason: r.reason,
     createdAt: r.createdAt,
-    entry: { id: r.entry.id, udiseCode: r.entry.udiseCode, schoolName: r.entry.schoolName, pincode: r.entry.pincode, currentStatus: r.entry.status },
+    entry: { id: r.entry.id, recordType: r.entry.recordType, code: r.entry.recordCode, name: r.entry.recordName, pincode: r.entry.pincode, currentStatus: r.entry.status },
     deo: r.entry.deo,
+  }));
+}
+
+/** GET /verifier/areas – work areas the admin assigned to this verifier, with the DEO's card and progress. */
+export async function verifierAreas(verifierId: string) {
+  const rows = await prisma().assignment.findMany({
+    where: { verifierId },
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    take: 200,
+  });
+  const cards = await personCards(rows.map((a) => a.deoId));
+  const withP = await withProgress(rows.map((a) => ({ id: a.id })));
+  return rows.map((a, i) => ({
+    id: a.id,
+    taskType: a.taskType,
+    recordType: a.recordType,
+    target: a.target,
+    area: { state: a.state, district: a.district, block: a.block, village: a.village, pincode: a.pincode },
+    deadline: a.deadline.toISOString().slice(0, 10),
+    status: a.status,
+    deo: cards.get(a.deoId) ?? { id: a.deoId, name: a.deoId, mobile: null, hasPhoto: false },
+    progress: withP[i].progress,
   }));
 }

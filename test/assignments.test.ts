@@ -44,7 +44,7 @@ const call = (token: string, method: string, path: string, body?: unknown) =>
   fetch(base + "/api/v1" + path, { method, headers: { ...H, authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
 const tomorrow = () => new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
 const work = (over: Record<string, unknown> = {}) => ({
-  deoId: "DEO126", taskType: "Data Entry Services", target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
+  deoId: "DEO126", taskType: "Data Entry Services", recordType: "school", verifierId: "VR101", verifierRate: 2, target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
   block: "Mawana", village: "Kithore", pincode: PIN1, deadline: tomorrow(), instructions: "Cover all government schools.\nStart with Class 10.", ...over,
 });
 

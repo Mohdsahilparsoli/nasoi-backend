@@ -23,11 +23,7 @@ const login = async (loginId: string, password: string) =>
 const call = (token: string, method: string, path: string, body?: unknown) =>
   fetch(base + "/api/v1" + path, { method, headers: { ...H, authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
 const raw = (token: string, path: string) => fetch(base + "/api/v1" + path, { headers: { ...H, authorization: `Bearer ${token}` } });
-const school = (over: Record<string, unknown> = {}) => ({
-  udiseCode: udise(), schoolName: "GPS Test", educationalBlock: "Mawana", ruralUrban: "Rural", cluster: "Kithore", lgdBlock: "Mawana",
-  lgdPanchayat: "Kithore", lgdVillage: "Kithore", schoolCategory: "Primary only (1-5)", schoolManagement: "Department of Education",
-  yearEstablished: 1980, schoolType: "Co-educational", ...over,
-});
+const { schoolRecord: school } = await import("./fixtures.js");
 const ids: string[] = [];
 const summary = async () => (await call(vr, "GET", "/verifier/summary")).json();
 
@@ -57,9 +53,9 @@ describe("verifier", () => {
     assert.equal(s.settings.verifierRate, 2);
   });
 
-  test("new entries are assigned to an active verifier automatically", async () => {
+  test("entries go to the verifier the admin chose for the area", async () => {
     const a = await call(admin, "POST", "/admin/assignments", {
-      deoId: DEO, taskType: "Data Entry Services", target: 5, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
+      deoId: DEO, taskType: "Data Entry Services", recordType: "school", verifierId: "VR101", verifierRate: 2, target: 5, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
       block: "Mawana", village: "Kithore", pincode: PIN, deadline: new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10),
     });
     assert.equal(a.status, 201);
@@ -68,14 +64,20 @@ describe("verifier", () => {
       assert.equal(r.status, 201);
       ids.push((await r.json()).entry.id);
     }
-    const rows = await prisma().entry.findMany({ where: { id: { in: ids } }, include: { verifier: true } });
-    for (const r of rows) {
-      assert.ok(r.verifierId, "has a verifier");
-      assert.equal(r.verifier!.role, "verifier");
-      assert.equal(r.verifier!.status, "active");
-    }
-    // Make the rest of the test deterministic: give them to VR101.
-    await prisma().entry.updateMany({ where: { id: { in: ids } }, data: { verifierId: "VR101" } });
+    const rows = await prisma().entry.findMany({ where: { id: { in: ids } } });
+    assert.ok(rows.every((r) => r.verifierId === "VR101"), "all entries with the area's verifier");
+    // The DEO sees the verifier's basic card – never the amounts.
+    const work = await (await call(deo, "GET", "/me/assignments")).json();
+    assert.equal(work.current.verifier.id, "VR101");
+    assert.ok(work.current.verifier.name && work.current.verifier.mobile);
+    assert.equal(work.current.verifierRate, undefined);
+    assert.equal(work.current.ratePerEntry, undefined);
+    // …and the verifier sees the area with the DEO's card.
+    const { areas } = await (await call(vr, "GET", "/verifier/areas")).json();
+    const area = areas.find((x: { id: string }) => x.id === work.current.id);
+    assert.equal(area.deo.id, DEO);
+    assert.ok(area.deo.mobile);
+    assert.equal(area.progress.submitted, 3);
   });
 
   test("summary and pending queue", async () => {
@@ -116,7 +118,7 @@ describe("verifier", () => {
 
   test("resubmitted entry returns to the same verifier", async () => {
     const e = (await (await call(deo, "GET", `/me/entries/${ids[0]}`)).json()).entry;
-    const r = await call(deo, "PATCH", `/me/entries/${ids[0]}`, { ...e.school, schoolName: "GPS Test Corrected" });
+    const r = await call(deo, "PATCH", `/me/entries/${ids[0]}`, { ...e.data, schoolName: "GPS Test Corrected" });
     assert.equal(r.status, 200);
     const row = await prisma().entry.findUniqueOrThrow({ where: { id: ids[0] } });
     assert.equal(row.status, "pending");
@@ -126,7 +128,7 @@ describe("verifier", () => {
     assert.equal(detail.entry.history[0].decision, "rejected");
   });
 
-  test("income = rate per verified entry; rate change applies to new decisions only", async () => {
+  test("income = verifier amount of the area per verified entry", async () => {
     let s = await summary();
     assert.equal(s.approved, 1);
     assert.equal(s.rejected, 1);
@@ -138,10 +140,11 @@ describe("verifier", () => {
     assert.equal(up.status, 200);
     assert.equal((await call(vr, "POST", `/verifier/entries/${ids[2]}/decision`, { decision: "approved" })).status, 200);
     s = await summary();
-    assert.equal(s.income, 7);
+    assert.equal(s.income, 6, "the area's verifier amount (₹2) is used, not the default in Settings");
     const h = await (await call(vr, "GET", "/verifier/history?decision=approved")).json();
     assert.equal(h.history.length, 2);
     assert.equal(h.history[0].entry.id, ids[2]);
+    assert.equal(h.history[0].entry.code.length, 11);
     assert.equal(h.history[0].rate, undefined);
     await call(admin, "PATCH", "/admin/settings", { verifierRate: 2, defaultDeoRate: 10, payoutWindow: "15th – 25th of every month" });
   });
@@ -186,10 +189,11 @@ describe("verifier", () => {
     const ExcelJS = (await import("exceljs")).default;
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(Buffer.from(await x.arrayBuffer()) as never);
-    const ws = wb.getWorksheet("Approved Entries")!;
+    const ws = wb.getWorksheet("Schools")!;
     assert.equal(ws.rowCount - 1, approved);
-    assert.equal(ws.getRow(1).getCell(8).value, "UDISE Code");
-    assert.equal(typeof ws.getRow(2).getCell(8).value, "string", "UDISE kept as text");
+    assert.equal(ws.getRow(1).getCell(9).value, "UDISE Code");
+    assert.equal(typeof ws.getRow(2).getCell(9).value, "string", "UDISE kept as text");
+    assert.ok(ws.getRow(1).values!.toString().includes("Medium 1"), "all form fields exported");
 
     const opts = await (await call(admin, "GET", "/admin/entries/export-options")).json();
     assert.ok(opts.pincodes.some((p: { value: string }) => p.value === PIN));
@@ -197,5 +201,35 @@ describe("verifier", () => {
     const list = await (await call(admin, "GET", `/admin/entries?deoId=${DEO}&status=approved`)).json();
     assert.equal(list.total, approved);
     assert.equal(typeof list.entries[0].ratePerEntry, "number", "admin sees rates");
+  });
+
+  test("photos: DEO and the area's verifier see each other's photo; documents stay private", async () => {
+    const png = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000" + "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082", "hex");
+    const form = new FormData();
+    form.append("file", new Blob([png], { type: "image/png" }), "me.png");
+    const up = await fetch(base + "/api/v1/profile/me/photo", { method: "POST", headers: { "x-nasoi-client": "web", authorization: `Bearer ${deo}` }, body: form });
+    assert.equal(up.status, 201);
+    const photo = await raw(vr, `/users/${DEO}/photo`);
+    assert.equal(photo.status, 200);
+    assert.equal(photo.headers.get("content-type"), "image/png");
+    assert.equal((await raw(vr2, `/users/${DEO}/photo`)).status, 404, "unrelated verifier cannot see it");
+    const bad = new FormData();
+    bad.append("file", new Blob([Buffer.from("%PDF-1.4 test")], { type: "image/png" }), "x.png");
+    assert.equal((await fetch(base + "/api/v1/profile/me/photo", { method: "POST", headers: { "x-nasoi-client": "web", authorization: `Bearer ${deo}` }, body: bad })).status, 415);
+    // A verifier can no longer open a DEO's documents (Aadhaar etc.).
+    const doc = await prisma().document.findFirst({ where: { userId: DEO, kind: "photo" } });
+    assert.equal((await raw(vr, `/documents/${doc!.id}`)).status, 404);
+    assert.equal((await raw(admin, `/documents/${doc!.id}`)).status, 200);
+  });
+
+  test("admin can change the verifier of an area; pending entries move", async () => {
+    const work = await (await call(deo, "GET", "/me/assignments")).json();
+    const r = await call(admin, "PATCH", `/admin/assignments/${work.current.id}/verifier`, { verifierId: "VR102" });
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.ok(body.movedEntries >= 1);
+    assert.equal(await prisma().entry.count({ where: { assignmentId: work.current.id, status: "pending", NOT: { verifierId: "VR102" } } }), 0);
+    const { verifiers } = await (await call(admin, "GET", "/admin/verifiers")).json();
+    assert.ok(verifiers.find((v: { id: string; activeAreas: number }) => v.id === "VR102").activeAreas >= 1);
   });
 });

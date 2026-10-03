@@ -51,6 +51,7 @@ model User {
   entries             Entry[]        @relation("DeoEntries")
   entriesVerified     Entry[]        @relation("VerifiedEntries")
   entriesToVerify     Entry[]        @relation("AssignedEntries")
+  areasToVerify       Assignment[]   @relation("VerifierAssignments")
   verifications       Verification[]
 
   @@map("users")
@@ -192,7 +193,10 @@ model Assignment {
   assignedById String           @map("assigned_by_id")
   taskType     String           @map("task_type")
   target       Int
-  ratePerEntry Int              @map("rate_per_entry") // rupees per approved entry
+  ratePerEntry Int              @map("rate_per_entry") // ₹ to the DEO per approved entry (admin only)
+  recordType   String           @default("school") @map("record_type") // school | college – decides the entry form
+  verifierId   String?          @map("verifier_id") // verifier for this area
+  verifierRate Int?             @map("verifier_rate") // ₹ to the verifier per verified entry (admin only)
   state        String
   district     String
   block        String
@@ -209,9 +213,11 @@ model Assignment {
 
   deo        User    @relation("DeoAssignments", fields: [deoId], references: [id], onDelete: Cascade)
   assignedBy User    @relation("AdminAssignments", fields: [assignedById], references: [id])
+  verifier   User?   @relation("VerifierAssignments", fields: [verifierId], references: [id], onDelete: SetNull)
   entries    Entry[]
 
   @@index([deoId, status])
+  @@index([verifierId, status])
   @@index([pincode, status])
   @@index([status, createdAt(sort: Desc)])
   @@map("assignments")
@@ -239,7 +245,7 @@ enum EntryStatus {
   rejected
 }
 
-/// One school record entered by a DEO under an assignment.
+/// One school / college record entered by a DEO under an assignment.
 /// State, educational district and PIN code come from the assignment.
 model Entry {
   id                 String      @id // ENT000001 …
@@ -248,19 +254,10 @@ model Entry {
   state              String
   district           String // educational district
   pincode            String      @db.VarChar(6)
-  udiseCode          String      @unique @map("udise_code") @db.VarChar(11)
-  schoolName         String      @map("school_name")
-  educationalBlock   String      @map("educational_block")
-  ruralUrban         String      @map("rural_urban") // Rural / Urban
-  cluster            String
-  lgdBlock           String      @map("lgd_block")
-  lgdPanchayat       String      @map("lgd_panchayat")
-  lgdVillage         String      @map("lgd_village")
-  schoolCategory     String      @map("school_category")
-  schoolManagement   String      @map("school_management")
-  yearEstablished    Int         @map("year_established")
-  yearRecognitionPri Int?        @map("year_recognition_pri")
-  schoolType         String      @map("school_type")
+  recordType         String      @default("school") @map("record_type") // school | college (from the assignment)
+  recordCode         String      @unique @map("record_code") @db.VarChar(20) // UDISE code / AISHE code
+  recordName         String      @map("record_name") // school / college name
+  data               Json        @default("{}") // all form fields (see src/modules/entries/forms.ts)
   ratePerEntry       Int         @map("rate_per_entry") // copied from the assignment when submitted
   status             EntryStatus @default(pending)
   rejectReason       String?     @map("reject_reason")

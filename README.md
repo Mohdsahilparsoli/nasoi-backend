@@ -28,11 +28,17 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | GET  | `/api/v1/admin/operators?q=` | Admin | All DEOs with location, current work and eligibility |
 | GET  | `/api/v1/admin/operators/:id` | Admin | Full profile (masked), documents, assignments |
 | PATCH | `/api/v1/admin/operators/:id/status` | Admin | `{ status: "active" \| "blocked" }` (blocking logs the DEO out) |
-| GET / POST | `/api/v1/admin/assignments` | Admin | List / assign work. Rules: one active assignment per DEO and per PIN code; ID `ASG-<PIN>-001` |
+| GET / POST | `/api/v1/admin/assignments` | Admin | List / assign work: DEO, **verifier of the area**, **school or college**, DEO amount and verifier amount. Rules: one active assignment per DEO and per PIN code; ID `ASG-<PIN>-001` |
+| PATCH | `/api/v1/admin/assignments/:id/verifier` | Admin | Change the verifier of an area (pending entries move) |
+| GET  | `/api/v1/admin/verifiers` | Admin | Verifiers with active areas and pending entries |
+| GET  | `/api/v1/verifier/areas` | Verifier | My areas with the DEO's card (ID, name, mobile, photo) |
+| POST | `/api/v1/profile/me/photo` | Bearer | Change my profile photo (JPG/PNG ≤ 2 MB) |
+| GET  | `/api/v1/users/:id/photo` | Bearer | Profile photo – self, admin, or the DEO / verifier of the same area |
 | PATCH | `/api/v1/admin/assignments/:id` | Admin | `{ status: "completed" \| "cancelled" }` |
 | GET  | `/api/v1/me/assignments` | DEO | `{ current, history }` with entry progress (`?seen=1` marks the current one seen) |
 | GET  | `/api/v1/me/summary` | DEO | Totals (pending / approved / rejected), earnings = approved × rate, month-wise history, progress of current work |
-| GET / POST | `/api/v1/me/entries` | DEO | List (`?status=&q=`) / add a school record (UDISE, school name, block, LGD details, category, management, years, type). State, district and PIN come from the current assignment. UDISE codes are unique; no entries beyond the target |
+| GET  | `/api/v1/entry-forms` | Bearer | Form definitions: **school** (UDISE+ school profile – 5 sections) and **college** (AISHE basic profile). Fields, options, rules |
+| GET / POST | `/api/v1/me/entries` | DEO | List (`?status=&q=`) / add a record using the form of the work (school or college). State, district and PIN come from the assignment. UDISE / AISHE codes are unique; no entries beyond the target |
 | GET / PATCH | `/api/v1/me/entries/:id` | DEO | View / correct a pending entry, or fix and resubmit a rejected one (approved entries are final) |
 | GET  | `/api/v1/notifications` / POST `/notifications/read` | Bearer | In-app notifications (bell) |
 | GET  | `/api/v1/verifier/summary` | Verifier | Total assigned, pending, approved, rejected, income (₹ per verified entry), month-wise |
@@ -46,7 +52,7 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 
 **Rates are private:** DEOs and verifiers only see their total earnings / income. The per-entry rates (DEO rate per assignment, verifier rate in settings) are set and seen only by the Super Admin – they are never sent to DEO or verifier APIs or e-mails.
 
-**Verifier assignment:** each new entry goes automatically to the active verifier with the fewest pending entries; a resubmitted entry goes back to the same verifier. Entries submitted while no verifier existed are picked up by the first verifier who opens the portal.
+**Verifier assignment:** the admin chooses a verifier for each area; all its entries go to that verifier (a resubmitted entry goes back to them). For older work without a verifier, entries go to the active verifier with the fewest pending entries. Documents (Aadhaar, bank proof …) can be opened only by their owner and the admin.
 
 All `POST` requests must send the header `X-NASOI-Client: web`.
 

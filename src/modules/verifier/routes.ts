@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { noStore, requireAuth } from "../../middleware/security.js";
-import { decide, decisionSchema, verifierEntries, verifierEntry, verifierHistory, verifierSummary } from "./service.js";
+import { decide, decisionSchema, verifierAreas, verifierEntries, verifierEntry, verifierHistory, verifierSummary } from "./service.js";
 
 /** Everything under /api/v1/verifier requires a Verifier login. */
 export const verifierRouter = Router();
@@ -31,4 +31,9 @@ verifierRouter.post("/entries/:id/decision", async (req, res) => {
 /** GET /verifier/history?decision=approved|rejected */
 verifierRouter.get("/history", async (req, res) => {
   res.json({ history: await verifierHistory(req.auth!.sub, typeof req.query.decision === "string" ? req.query.decision : undefined) });
+});
+
+/** GET /verifier/areas – my work areas with the DEO of each. */
+verifierRouter.get("/areas", async (req, res) => {
+  res.json({ areas: await verifierAreas(req.auth!.sub) });
 });

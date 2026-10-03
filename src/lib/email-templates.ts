@@ -176,7 +176,7 @@ export function resetPasswordEmail(name: string, link: string, minutes: number) 
 
 /** Sent to a DEO when work is assigned. */
 export function assignmentEmail(a: {
-  id: string; deoName: string; taskType: string; target: number;
+  id: string; deoName: string; taskType: string; target: number; recordType?: string; verifierName?: string; verifierId?: string;
   village: string; block: string; district: string; state: string; pincode: string; deadline: Date; instructions?: string | null;
 }) {
   const link = `${appUrl()}/deo/work`;
@@ -192,10 +192,12 @@ export function assignmentEmail(a: {
       detailsTable([
         ["Assignment ID", a.id],
         ["Service", a.taskType],
+        ["Entries of", a.recordType === "college" ? "College" : "School"],
         ["PIN code", a.pincode],
         ["Area", area],
         ["Target", `${a.target} entries`],
         ["Deadline", deadline],
+        ...(a.verifierName ? ([["Verifier", `${a.verifierName} (${a.verifierId})`]] as [string, string][]) : []),
       ]),
       a.instructions ? `<p style="margin:0 0 6px;font-weight:bold">Instructions</p>${p(esc(a.instructions).replace(/\n/g, "<br>"))}` : "",
       button("Open My Work", link),
@@ -216,6 +218,56 @@ export function assignmentEmail(a: {
     ...(a.instructions ? ["", "Instructions:", a.instructions] : []),
     "",
     `Open My Work: ${link}`,
+    "",
+    "This is an automated e-mail – please do not reply.",
+  ].join("\n");
+  return { subject, html, text };
+}
+
+/** Sent to a verifier when an area (work) is assigned to them for verification. */
+export function verifierAreaEmail(a: {
+  id: string; verifierName: string; deoName: string; deoId: string; taskType: string; recordType: string; target: number;
+  village: string; block: string; district: string; state: string; pincode: string; deadline: Date;
+}) {
+  const link = `${appUrl()}/verifier`;
+  const deadline = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(a.deadline);
+  const area = `${a.village}, ${a.block}, ${a.district}, ${a.state} – ${a.pincode}`;
+  const what = a.recordType === "college" ? "College" : "School";
+  const subject = `New area to verify – ${a.id} (PIN ${a.pincode})`;
+  const html = layout({
+    preheader: `${what} entries for PIN ${a.pincode} by ${a.deoName} will come to you for verification.`,
+    title: "New area assigned for verification",
+    body: [
+      p(`Dear <b>${esc(a.verifierName)}</b>,`),
+      p("The NASOI admin has assigned a work area to you. Entries made by the Data Entry Operator of this area will come to you for verification."),
+      detailsTable([
+        ["Assignment ID", a.id],
+        ["Service", a.taskType],
+        ["Entries of", what],
+        ["PIN code", a.pincode],
+        ["Area", area],
+        ["Data Entry Operator", `${a.deoName} (${a.deoId})`],
+        ["Target", `${a.target} entries`],
+        ["Deadline", deadline],
+      ]),
+      button("Open Verifier Panel", link),
+    ].join("\n"),
+  });
+  const text = [
+    `Dear ${a.verifierName},`,
+    "",
+    "The NASOI admin has assigned a work area to you for verification.",
+    "",
+    `Assignment ID : ${a.id}`,
+    `Service       : ${a.taskType}`,
+    `Entries of    : ${what}`,
+    `PIN code      : ${a.pincode}`,
+    `Area          : ${area}`,
+    `DEO           : ${a.deoName} (${a.deoId})`,
+    `Target        : ${a.target} entries`,
+    `Deadline      : ${deadline}`,
+    "",
+    `Open Verifier Panel: ${link}`,
     "",
     "This is an automated e-mail – please do not reply.",
   ].join("\n");

@@ -23,3 +23,16 @@ export async function ensureFixtures() {
     });
   }
 }
+
+/** A complete, valid school record (UDISE school profile) for tests. */
+export const randomUdise = () => String(Math.floor(1e10 + Math.random() * 8.9e10));
+export function schoolRecord(over: Record<string, unknown> = {}) {
+  return {
+    udiseCode: randomUdise(), schoolName: "  Govt.   Primary School Kithore ", educationalBlock: "Mawana", ruralUrban: "rural", cluster: "Kithore",
+    lgdBlock: "Mawana", lgdPanchayat: "Kithore", lgdVillage: "Kithore", schoolCategory: "Primary with Upper Primary (1-8)",
+    schoolManagement: "Department of Education", schoolType: "Co-educational", lowestClass: "1", highestClass: "8", prePrimary: "No",
+    medium1: "Hindi", acadInspections: 0, yearEstablished: 1965, yearRecognitionPri: 1970, shiftSchool: "No", buildingStatus: "Government",
+    boundaryWall: "Pucca", buildingBlocks: 3, puccaBuildingBlocks: 2, specialSchoolCwsn: "No", ramps: "Yes", handrails: "Yes",
+    anganwadi: "NA", residentialSchool: "Non Residential", minoritySchool: "No", allWeatherRoad: "Yes", ...over,
+  };
+}

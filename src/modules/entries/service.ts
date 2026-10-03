@@ -2,33 +2,24 @@ import type { Request } from "express";
 import { prisma } from "../../db.js";
 import { Prisma, type Entry } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
-import { HttpError } from "../../lib/http.js";
-import type { EntryInput } from "./schema.js";
+import { HttpError, fieldError } from "../../lib/http.js";
+import { FORMS, RECORD_LABEL, recordSchema, type RecordType } from "./forms.js";
 
 /** Entries that count towards an assignment's target (rejected ones do not, until resubmitted). */
 const COUNTED = ["pending", "approved"] as const;
+
+export const asRecordType = (t: string): RecordType => (t === "college" ? "college" : "school");
 
 export function toPublicEntry(e: Entry) {
   return {
     id: e.id,
     assignmentId: e.assignmentId,
     deoId: e.deoId,
+    recordType: asRecordType(e.recordType),
+    code: e.recordCode,
+    name: e.recordName,
     area: { state: e.state, district: e.district, pincode: e.pincode },
-    school: {
-      udiseCode: e.udiseCode,
-      schoolName: e.schoolName,
-      educationalBlock: e.educationalBlock,
-      ruralUrban: e.ruralUrban,
-      cluster: e.cluster,
-      lgdBlock: e.lgdBlock,
-      lgdPanchayat: e.lgdPanchayat,
-      lgdVillage: e.lgdVillage,
-      schoolCategory: e.schoolCategory,
-      schoolManagement: e.schoolManagement,
-      yearEstablished: e.yearEstablished,
-      yearRecognitionPri: e.yearRecognitionPri,
-      schoolType: e.schoolType,
-    },
+    data: (e.data ?? {}) as Record<string, string | number>,
     // ratePerEntry is never sent to DEOs or verifiers – only the admin sees rates.
     status: e.status,
     rejectReason: e.rejectReason,
@@ -39,32 +30,26 @@ export function toPublicEntry(e: Entry) {
   };
 }
 
-const schoolData = (v: EntryInput) => ({
-  udiseCode: v.udiseCode,
-  schoolName: v.schoolName,
-  educationalBlock: v.educationalBlock,
-  ruralUrban: v.ruralUrban,
-  cluster: v.cluster,
-  lgdBlock: v.lgdBlock,
-  lgdPanchayat: v.lgdPanchayat,
-  lgdVillage: v.lgdVillage,
-  schoolCategory: v.schoolCategory,
-  schoolManagement: v.schoolManagement,
-  yearEstablished: v.yearEstablished,
-  yearRecognitionPri: v.yearRecognitionPri ?? null,
-  schoolType: v.schoolType,
-});
+/** Validates the form for this record type and returns the columns to store. */
+export function parseRecord(type: RecordType, body: unknown) {
+  const data = recordSchema(type).parse(body ?? {});
+  const form = FORMS[type];
+  return { recordType: type, recordCode: String(data[form.codeField]), recordName: String(data[form.nameField]), data };
+}
 
-/** UDISE code is unique across the portal: one school is entered only once. */
-async function assertUdiseFree(tx: Prisma.TransactionClient, udiseCode: string, deoId: string, exceptId?: string) {
-  const other = await tx.entry.findUnique({ where: { udiseCode }, select: { id: true, deoId: true } });
+/** UDISE / AISHE code is unique across the portal: one school or college is entered only once. */
+async function assertCodeFree(tx: Prisma.TransactionClient, type: RecordType, code: string, deoId: string, exceptId?: string) {
+  const other = await tx.entry.findUnique({ where: { recordCode: code }, select: { id: true, deoId: true } });
   if (other && other.id !== exceptId) {
-    throw new HttpError(
+    const form = FORMS[type];
+    const label = form.fields.find((f) => f.key === form.codeField)!.label;
+    throw fieldError(
       409,
+      "DUPLICATE_CODE",
+      form.codeField,
       other.deoId === deoId
-        ? `You have already entered this school (UDISE ${udiseCode}) as ${other.id}.`
-        : `This school (UDISE ${udiseCode}) has already been entered on the portal.`,
-      "DUPLICATE_UDISE",
+        ? `You have already entered this ${RECORD_LABEL[type].toLowerCase()} (${label} ${code}) as ${other.id}.`
+        : `This ${RECORD_LABEL[type].toLowerCase()} (${label} ${code}) has already been entered on the portal.`,
     );
   }
 }
@@ -76,16 +61,20 @@ async function assertBelowTarget(tx: Prisma.TransactionClient, a: { id: string; 
   }
 }
 
+const isActiveVerifier = async (tx: Prisma.TransactionClient, id?: string | null) => {
+  if (!id) return false;
+  const v = await tx.user.findUnique({ where: { id }, select: { role: true, status: true } });
+  return v?.role === "verifier" && v.status === "active";
+};
+
 /**
- * Automatic assignment: the active verifier with the fewest pending entries
- * (then fewest entries overall). Returns null when no verifier exists yet –
+ * Which verifier gets an entry: the verifier the admin chose for the area. If
+ * none was chosen (older work) or that verifier is blocked, the active
+ * verifier with the fewest pending entries. Null when no verifier exists yet –
  * such entries are picked up by the first verifier who opens the queue.
  */
-export async function pickVerifier(tx: Prisma.TransactionClient, keep?: string | null): Promise<string | null> {
-  if (keep) {
-    const v = await tx.user.findUnique({ where: { id: keep }, select: { role: true, status: true } });
-    if (v?.role === "verifier" && v.status === "active") return keep;
-  }
+export async function pickVerifier(tx: Prisma.TransactionClient, preferred?: (string | null)[]): Promise<string | null> {
+  for (const id of preferred ?? []) if (await isActiveVerifier(tx, id)) return id!;
   const rows = await tx.$queryRaw<{ id: string }[]>`
     select u.id from users u
     where u.role = 'verifier' and u.status = 'active'
@@ -98,25 +87,32 @@ export async function pickVerifier(tx: Prisma.TransactionClient, keep?: string |
 
 const lockAssignment = (tx: Prisma.TransactionClient, id: string) => tx.$executeRaw`select pg_advisory_xact_lock(hashtext(${"entry:asg:" + id}))`;
 
-const isUdiseConflict = (err: unknown) =>
-  err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002" && JSON.stringify(err.meta ?? {}).includes("udise");
+const isCodeConflict = (err: unknown) =>
+  err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002" && JSON.stringify(err.meta ?? {}).includes("record_code");
 
-/** POST /me/entries – always goes into the DEO's current (active) assignment. */
-export async function createEntry(req: Request, deoId: string, v: EntryInput) {
+const conflictError = (type: RecordType) =>
+  fieldError(409, "DUPLICATE_CODE", FORMS[type].codeField, `This ${RECORD_LABEL[type].toLowerCase()} has already been entered on the portal.`);
+
+/** POST /me/entries – always goes into the DEO's current (active) assignment, using that work's form. */
+export async function createEntry(req: Request, deoId: string, body: unknown) {
+  const a = await prisma().assignment.findFirst({ where: { deoId, status: "active" } });
+  if (!a) throw new HttpError(409, "You have no active work. Entries can be added only for work assigned to you.", "NO_ACTIVE_WORK");
+  const type = asRecordType(a.recordType);
+  const rec = parseRecord(type, body);
   try {
     const entry = await prisma().$transaction(
       async (tx) => {
-        const a = await tx.assignment.findFirst({ where: { deoId, status: "active" } });
-        if (!a) throw new HttpError(409, "You have no active work. Entries can be added only for work assigned to you.", "NO_ACTIVE_WORK");
         await lockAssignment(tx, a.id);
-        await assertUdiseFree(tx, v.udiseCode, deoId);
+        const fresh = await tx.assignment.findUnique({ where: { id: a.id }, select: { status: true } });
+        if (fresh?.status !== "active") throw new HttpError(409, "This work has just been closed by the admin.", "WORK_CLOSED");
+        await assertCodeFree(tx, type, rec.recordCode, deoId);
         await assertBelowTarget(tx, a);
 
         const [{ value }] = await tx.$queryRaw<{ value: number }[]>`
           insert into id_counters (key, value) values ('entry', 1)
           on conflict (key) do update set value = id_counters.value + 1
           returning value`;
-        const verifierId = await pickVerifier(tx);
+        const verifierId = await pickVerifier(tx, [a.verifierId]);
         return tx.entry.create({
           data: {
             id: `ENT${String(value).padStart(6, "0")}`,
@@ -128,7 +124,7 @@ export async function createEntry(req: Request, deoId: string, v: EntryInput) {
             district: a.district,
             pincode: a.pincode,
             ratePerEntry: a.ratePerEntry,
-            ...schoolData(v),
+            ...rec,
           },
         });
       },
@@ -137,7 +133,7 @@ export async function createEntry(req: Request, deoId: string, v: EntryInput) {
     await audit(req, "entry.created", deoId, { entryId: entry.id, assignmentId: entry.assignmentId });
     return toPublicEntry(entry);
   } catch (err) {
-    if (isUdiseConflict(err)) throw new HttpError(409, `This school (UDISE ${v.udiseCode}) has already been entered on the portal.`, "DUPLICATE_UDISE");
+    if (isCodeConflict(err)) throw conflictError(type);
     throw err;
   }
 }
@@ -146,24 +142,30 @@ export async function createEntry(req: Request, deoId: string, v: EntryInput) {
  * PATCH /me/entries/:id – a pending entry can be corrected; a rejected entry is
  * corrected and goes back to "pending" (resubmitted). Approved entries are final.
  */
-export async function updateEntry(req: Request, deoId: string, id: string, v: EntryInput) {
+export async function updateEntry(req: Request, deoId: string, id: string, body: unknown) {
+  const current = await prisma().entry.findUnique({ where: { id }, select: { deoId: true, recordType: true } });
+  if (!current || current.deoId !== deoId) throw new HttpError(404, "Entry not found.", "NOT_FOUND");
+  const type = asRecordType(current.recordType);
+  const rec = parseRecord(type, body);
   try {
     const { entry, resubmitted } = await prisma().$transaction(
       async (tx) => {
-        const e = await tx.entry.findUnique({ where: { id }, include: { assignment: { select: { id: true, status: true, target: true } } } });
+        const e = await tx.entry.findUnique({ where: { id }, include: { assignment: { select: { id: true, status: true, target: true, verifierId: true } } } });
         if (!e || e.deoId !== deoId) throw new HttpError(404, "Entry not found.", "NOT_FOUND");
         if (e.status === "approved") throw new HttpError(409, "Approved entries cannot be changed.", "ENTRY_FINAL");
         if (e.assignment.status !== "active") throw new HttpError(409, `Work ${e.assignmentId} is closed, so its entries cannot be changed.`, "WORK_CLOSED");
         await lockAssignment(tx, e.assignmentId);
         const resubmit = e.status === "rejected";
-        await assertUdiseFree(tx, v.udiseCode, deoId, e.id);
+        await assertCodeFree(tx, type, rec.recordCode, deoId, e.id);
         if (resubmit) await assertBelowTarget(tx, e.assignment);
-        // A resubmitted entry goes back to the same verifier (if still active).
-        const verifierId = resubmit ? await pickVerifier(tx, e.verifierId) : e.verifierId;
+        // A resubmitted entry goes back to the area's verifier (normally the one who rejected it).
+        const verifierId = resubmit ? await pickVerifier(tx, [e.assignment.verifierId, e.verifierId]) : e.verifierId;
         const updated = await tx.entry.update({
           where: { id },
           data: {
-            ...schoolData(v),
+            recordCode: rec.recordCode,
+            recordName: rec.recordName,
+            data: rec.data,
             ...(resubmit
               ? {
                   status: "pending",
@@ -184,7 +186,7 @@ export async function updateEntry(req: Request, deoId: string, id: string, v: En
     await audit(req, resubmitted ? "entry.resubmitted" : "entry.updated", deoId, { entryId: id });
     return toPublicEntry(entry);
   } catch (err) {
-    if (isUdiseConflict(err)) throw new HttpError(409, `This school (UDISE ${v.udiseCode}) has already been entered on the portal.`, "DUPLICATE_UDISE");
+    if (isCodeConflict(err)) throw conflictError(type);
     throw err;
   }
 }
@@ -197,9 +199,8 @@ export async function listMyEntries(deoId: string, f: { status?: string; q?: str
   if (q) {
     where.OR = [
       { id: { contains: q, mode: "insensitive" } },
-      { udiseCode: { startsWith: q } },
-      { schoolName: { contains: q, mode: "insensitive" } },
-      { lgdVillage: { contains: q, mode: "insensitive" } },
+      { recordCode: { startsWith: q.toUpperCase() } },
+      { recordName: { contains: q, mode: "insensitive" } },
     ];
   }
   const rows = await prisma().entry.findMany({ where, orderBy: { submittedAt: "desc" }, take: 2000 });
