@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import { Prisma, type Payment } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
-import { buildWorkbook, emailFile, XLSX_TYPE, type SheetSpec } from "../../lib/files.js";
+import { buildWorkbook, emailFile, XLSX_TYPE, type EmailRequest, type SheetSpec } from "../../lib/files.js";
 import { HttpError, fieldError } from "../../lib/http.js";
 import { paymentEmail } from "../../lib/mailer.js";
 import { notify } from "../../lib/notify.js";
@@ -244,12 +244,11 @@ export async function myPaymentsWorkbook(userId: string, role: PayRole) {
   return { filename: `nasoi-payments_${userId.toLowerCase()}_${stamp()}.xlsx`, content: await buildWorkbook(sheets), contentType: XLSX_TYPE };
 }
 
-export async function emailPayoutWorkbook(req: Request, adminId: string, role: PayRole, to: string) {
+export async function emailPayoutWorkbook(req: Request, adminId: string, role: PayRole, mail: EmailRequest) {
   const file = await payoutWorkbook(role);
-  return emailFile(req, adminId, to, file, {
-    subject: `NASOI ${ROLE_NAME[role]} payouts – ${stamp()}`,
-    title: `${ROLE_NAME[role]} payouts`,
-    intro: `Attached: earned, paid and balance of every ${ROLE_NAME[role]}, with all payment receipts.`,
+  return emailFile(req, adminId, mail, file, {
+    report: `${ROLE_NAME[role]} payouts report`,
+    details: `Earned, paid and balance of every ${ROLE_NAME[role]}, with all payment receipts (Excel).`,
   });
 }
 
@@ -258,9 +257,15 @@ export async function emailMyPayments(req: Request, userId: string, role: PayRol
   const u = await prisma().user.findUnique({ where: { id: userId }, select: { email: true } });
   if (!u?.email) throw new HttpError(400, "No e-mail is registered on your account.", "NO_EMAIL");
   const file = await myPaymentsWorkbook(userId, role);
-  return emailFile(req, userId, u.email, file, {
-    subject: `Your NASOI payments – ${stamp()}`,
-    title: "Your payments",
-    intro: "Attached: every payment you have received from NASOI, with your total earned and balance.",
-  });
+  return emailFile(
+    req,
+    userId,
+    {
+      to: [u.email],
+      subject: "Your NASOI payments – {date}",
+      message: "Hello,\n\nAttached is every payment you have received from NASOI, with your total earned and balance.\n\nRegards,\nNASOI",
+    },
+    file,
+    { report: "your payments", details: "" },
+  );
 }

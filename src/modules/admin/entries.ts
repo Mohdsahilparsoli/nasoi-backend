@@ -5,7 +5,7 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
-import { CSV_TYPE, XLSX_TYPE, emailFile, toBuffer } from "../../lib/files.js";
+import { CSV_TYPE, XLSX_TYPE, emailFile, toBuffer, type EmailRequest } from "../../lib/files.js";
 import { FORMS, RECORD_LABEL, type FieldDef, type RecordType } from "../entries/forms.js";
 
 /* ------------------------------------------------------------------ */
@@ -274,16 +274,26 @@ export async function exportApproved(req: Request, res: Response, adminId: strin
   await audit(req, "entries.exported", adminId, { format, count, ...filterMeta(f) });
 }
 
+const FILTER_LABEL: [keyof EntryFilter, string][] = [
+  ["recordType", "Type"], ["pincode", "PIN code"], ["deoId", "DEO"], ["verifierId", "Verifier"], ["assignmentId", "Assignment"],
+  ["taskType", "Service"], ["state", "State"], ["district", "District"], ["from", "Approved from"], ["to", "Approved to"], ["q", "Search"],
+];
+
+/** "Filters: PIN code 207001, DEO DEO126" – for the e-mail text. */
+function filterText(f: EntryFilter) {
+  const parts = FILTER_LABEL.filter(([k]) => f[k]).map(([k, label]) => `${label} ${f[k]}`);
+  return parts.length ? `Filters: ${parts.join(", ")}.` : "All approved entries (no filter).";
+}
+
 /** POST /admin/entries/export/email – the same file, sent as an e-mail attachment. */
-export async function emailApproved(req: Request, adminId: string, f: EntryFilter, format: "csv" | "xlsx", to: string) {
+export async function emailApproved(req: Request, adminId: string, f: EntryFilter, format: "csv" | "xlsx", mail: EmailRequest) {
   let count = 0;
   const content = await toBuffer(async (out) => (count = await writeApproved(out, f, format)));
   const filename = fileName(f, format);
-  const r = await emailFile(req, adminId, to, { filename, content, contentType: format === "csv" ? CSV_TYPE : XLSX_TYPE }, {
-    subject: `NASOI approved entries – ${filename}`,
-    title: "Approved entries export",
-    intro: `Attached: ${count} approved entr${count === 1 ? "y" : "ies"} from the NASOI portal.`,
+  const r = await emailFile(req, adminId, mail, { filename, content, contentType: format === "csv" ? CSV_TYPE : XLSX_TYPE }, {
+    report: "approved entries export",
+    details: `${count} approved entr${count === 1 ? "y" : "ies"} (${format === "csv" ? "CSV" : "Excel"}). ${filterText(f)}`,
   });
-  await audit(req, "entries.exported", adminId, { format, count, emailedTo: to, ...filterMeta(f) });
+  await audit(req, "entries.exported", adminId, { format, count, emailedTo: mail.to.join(", "), ...filterMeta(f) });
   return { ...r, count };
 }

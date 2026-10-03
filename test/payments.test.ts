@@ -140,17 +140,51 @@ describe("employees, payouts and e-mailed files", () => {
     mails.length = 0;
     const a = await call(admin, "POST", "/admin/payouts/export/email", { role: "verifier", to: "Accounts@Example.org" });
     assert.equal(a.status, 200);
-    const e = await call(admin, "POST", "/admin/entries/export/email", { to: "accounts@example.org", format: "csv", deoId: DEO });
+    const e = await call(admin, "POST", "/admin/entries/export/email", {
+      to: "accounts@example.org, boss@example.org",
+      cc: "audit@example.org; accounts@example.org",
+      subject: "Custom report {date}",
+      message: "Hello team,\n\n{details}\nFile {file}",
+      format: "csv",
+      filters: { deoId: DEO, to: "2099-12-31" },
+    });
     assert.equal(e.status, 200);
-    assert.equal((await e.json()).count, 2);
-    assert.equal((await call(admin, "POST", "/admin/entries/export/email", { to: "not-an-email" })).status, 400);
-    const m = await call(deo, "POST", "/payments/me/export/email", { to: "someone@else.com" });
+    const ej = await e.json();
+    assert.equal(ej.count, 2);
+    assert.deepEqual(ej.to, ["accounts@example.org", "boss@example.org"]);
+    assert.deepEqual(ej.cc, ["audit@example.org"], "a To address is not repeated in CC");
+    const bad = await call(admin, "POST", "/admin/entries/export/email", { to: "ok@example.org, not-an-email" });
+    assert.equal(bad.status, 400);
+    assert.match(JSON.stringify(await bad.json()), /not-an-email/);
+    assert.equal((await call(admin, "POST", "/admin/entries/export/email", { to: "" })).status, 400);
+    const m = await call(deo, "POST", "/payments/me/export/email", { to: "someone@else.com", cc: "x@else.com" });
     assert.equal(m.status, 200);
-    assert.equal((await m.json()).to, "meena.demo@example.com", "always the employee's own e-mail");
+    assert.deepEqual((await m.json()).to, ["meena.demo@example.com"], "always the employee's own e-mail");
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(mails.length, 3);
     assert.ok(mails[0].to === "accounts@example.org" && /filename="?nasoi-verifier-payouts_/.test(mails[0].raw), "payouts xlsx attached");
+    assert.ok(mails[0].raw.includes("Verifier payouts report"), "default template filled");
+    assert.equal(mails[1].to, "accounts@example.org,boss@example.org,audit@example.org");
     assert.ok(/filename="?nasoi-approved-entries_deo129_/.test(mails[1].raw), "entries csv attached");
+    assert.ok(/Subject: Custom report \d{2} \w{3} \d{4}/.test(mails[1].raw), "custom subject with {date}");
+    assert.ok(mails[1].raw.includes("Hello team") && mails[1].raw.includes("DEO DEO129"), "custom message with {details}");
     assert.ok(mails[2].to === "meena.demo@example.com" && /filename="?nasoi-payments_deo129_/.test(mails[2].raw));
+  });
+
+  test("admin can save and reset the default e-mail template", async () => {
+    const s0 = await (await call(admin, "GET", "/admin/settings")).json();
+    assert.equal(s0.settings.mailTemplate.isDefault, true);
+    assert.match(s0.settings.mailTemplate.message, /\{report\}/);
+    assert.equal((await call(admin, "PATCH", "/admin/settings/mail-template", { subject: "a\nb", message: "short" })).status, 400);
+    assert.equal((await call(deo, "PATCH", "/admin/settings/mail-template", { reset: true })).status, 403);
+    const s1 = await call(admin, "PATCH", "/admin/settings/mail-template", { subject: "GrowVika {report}", message: "Namaste,\n\nSee {file}.\n\nNASOI" });
+    assert.equal(s1.status, 200);
+    assert.equal((await s1.json()).settings.mailTemplate.isDefault, false);
+    mails.length = 0;
+    assert.equal((await call(admin, "POST", "/admin/payouts/export/email", { role: "deo", to: "a@example.org" })).status, 200);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(/Subject: GrowVika DEO payouts report/.test(mails[0].raw) && mails[0].raw.includes("Namaste"), "saved template used");
+    const s2 = await (await call(admin, "PATCH", "/admin/settings/mail-template", { reset: true })).json();
+    assert.equal(s2.settings.mailTemplate.isDefault, true);
   });
 });

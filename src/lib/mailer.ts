@@ -31,7 +31,7 @@ export interface MailAttachment {
   contentType: string;
 }
 
-export async function sendMail(msg: { to: string; subject: string; text: string; html: string; attachments?: MailAttachment[] }) {
+export async function sendMail(msg: { to: string | string[]; cc?: string[]; subject: string; text: string; html: string; attachments?: MailAttachment[] }) {
   await mailer().sendMail({ from: config().SMTP_FROM, ...msg });
 }
 

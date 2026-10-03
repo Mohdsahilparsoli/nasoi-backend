@@ -322,6 +322,8 @@ model AppSetting {
   verifierRate   Int      @default(2) @map("verifier_rate") // ₹ per verified (approved or rejected) entry
   defaultDeoRate Int      @default(10) @map("default_deo_rate") // ₹ per approved entry, default for new work
   payoutWindow   String   @default("15th – 25th of every month") @map("payout_window")
+  mailSubject    String?  @map("mail_subject") @db.VarChar(200) // default e-mail template (NULL = built-in)
+  mailMessage    String?  @map("mail_message")
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("app_settings")

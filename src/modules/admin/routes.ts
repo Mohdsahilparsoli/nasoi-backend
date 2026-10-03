@@ -4,7 +4,7 @@ import { noStore, requireAuth } from "../../middleware/security.js";
 import { changeVerifierSchema, createAssignmentSchema, updateAssignmentSchema } from "../assignments/schema.js";
 import { changeVerifier, createAssignment, listAssignments, listVerifiers, updateAssignmentStatus } from "../assignments/service.js";
 import { audit } from "../../lib/audit.js";
-import { getSettings, settingsSchema, updateSettings } from "../../lib/settings.js";
+import { getSettings, mailTemplateSchema, settingsSchema, updateMailTemplate, updateSettings } from "../../lib/settings.js";
 import { emailToSchema } from "../../lib/files.js";
 import { adminPayoutsRouter } from "../payments/routes.js";
 import { emailApproved, exportApproved, exportOptions, listAdminEntries, parseFilter } from "./entries.js";
@@ -63,6 +63,14 @@ adminRouter.get("/settings", async (_req, res) => {
   res.json({ settings: await getSettings() });
 });
 
+/** PATCH /admin/settings/mail-template { subject, message } | { reset: true } – default e-mail template. */
+adminRouter.patch("/settings/mail-template", async (req, res) => {
+  const v = mailTemplateSchema.parse(req.body);
+  const settings = await updateMailTemplate(v);
+  await audit(req, "settings.updated", req.auth!.sub, { mailTemplate: "reset" in v ? "reset" : "saved" });
+  res.json({ settings });
+});
+
 adminRouter.patch("/settings", async (req, res) => {
   const settings = await updateSettings(settingsSchema.parse(req.body));
   await audit(req, "settings.updated", req.auth!.sub, { verifierRate: settings.verifierRate, defaultDeoRate: settings.defaultDeoRate });
@@ -81,11 +89,12 @@ adminRouter.get("/entries/export-options", async (_req, res) => {
   res.json(await exportOptions());
 });
 
-/** POST /admin/entries/export/email { to, format, filters… } – send the export as an e-mail attachment. */
+/** POST /admin/entries/export/email { to, cc, subject, message, format, filters: {…} } – send the export as an e-mail attachment. */
 adminRouter.post("/entries/export/email", async (req, res) => {
-  const { to } = emailToSchema.parse(req.body);
-  const { format, to: _t, ...rest } = (req.body ?? {}) as Record<string, unknown>;
-  res.json(await emailApproved(req, req.auth!.sub, parseFilter(rest), format === "csv" ? "csv" : "xlsx", to));
+  const mail = emailToSchema.parse(req.body);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const filters = body.filters && typeof body.filters === "object" ? (body.filters as Record<string, unknown>) : {};
+  res.json(await emailApproved(req, req.auth!.sub, parseFilter(filters), body.format === "csv" ? "csv" : "xlsx", mail));
 });
 
 /** GET /admin/entries/export?format=xlsx|csv&<filters> – approved entries only. No filters = export all. */

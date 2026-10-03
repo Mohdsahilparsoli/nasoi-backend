@@ -27,10 +27,9 @@ adminPayoutsRouter.get("/payouts/export", async (req, res) => {
   sendFile(res, await payoutWorkbook(role(req.query.role)));
 });
 
-/** POST /admin/payouts/export/email { role, to } */
+/** POST /admin/payouts/export/email { role, to, cc, subject, message } */
 adminPayoutsRouter.post("/payouts/export/email", async (req, res) => {
-  const { to } = emailToSchema.parse(req.body);
-  res.json(await emailPayoutWorkbook(req, req.auth!.sub, role(req.body?.role), to));
+  res.json(await emailPayoutWorkbook(req, req.auth!.sub, role(req.body?.role), emailToSchema.parse(req.body)));
 });
 
 /** GET /admin/payments?role=&userId= – payment receipts. */

@@ -45,16 +45,19 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | GET  | `/api/v1/verifier/entries?view=pending\|all` / `/verifier/entries/:id` | Verifier | Entries assigned to me (oldest pending first) / one entry with its verification history |
 | POST | `/api/v1/verifier/entries/:id/decision` | Verifier | `{ decision: "approved" \| "rejected", reason }` – reason required to reject; the DEO is notified |
 | GET  | `/api/v1/verifier/history?decision=` | Verifier | My approve / reject history |
-| GET / PATCH | `/api/v1/admin/settings` | Admin | Verifier rate, default DEO rate, payout window |
+| GET / PATCH | `/api/v1/admin/settings` | Admin | Verifier rate, default DEO rate, payout window, e-mail template |
+| PATCH | `/api/v1/admin/settings/mail-template` | Admin | `{ subject, message }` or `{ reset: true }` – default text of e-mailed files |
 | GET  | `/api/v1/admin/entries?status=&pincode=&deoId=&verifierId=&assignmentId=&taskType=&state=&district=&from=&to=&q=` | Admin | All entries (with rates) |
 | GET  | `/api/v1/admin/entries/export-options` | Admin | PIN codes, DEOs, verifiers, assignments, districts, services that have approved entries |
 | GET  | `/api/v1/admin/entries/export?format=xlsx\|csv&<same filters>` | Admin | Download **approved** entries as Excel or CSV. No filter = export all. `from`/`to` = approved between (IST) |
-| POST | `/api/v1/admin/entries/export/email` | Admin | `{ to, format, filters }` – same file sent as an e-mail attachment |
+| POST | `/api/v1/admin/entries/export/email` | Admin | `{ to, cc, subject, message, format, filters: {…} }` – same file sent as an e-mail attachment |
 | GET  | `/api/v1/admin/payouts?role=deo\|verifier` | Admin | Every employee's earned / paid / balance from the database (+ masked bank) |
 | GET  | `/api/v1/admin/payouts/export?role=` / POST `/admin/payouts/export/email` | Admin | Separate DEO and verifier Excel (payouts + receipts), download or e-mail |
 | GET / POST | `/api/v1/admin/payments` | Admin | Receipts list / **Add Receipt**: `{ userId, amount, transactionId (unique), payeeName, mode, paidOn, entriesCount, periodFrom, periodTo, notes }` – the employee is notified and e-mailed |
 | GET  | `/api/v1/payments/me` | DEO / Verifier | My payments (all receipt details), earned / paid / balance |
 | GET  | `/api/v1/payments/me/export` / POST `/payments/me/export/email` | DEO / Verifier | My payments as Excel – download or e-mail to **my own** e-mail |
+
+**E-mailing files (admin):** any custom addresses – `to` and optional `cc` (comma separated or arrays, max 10 each, validated, duplicates removed). `subject` / `message` are optional: blank = the **default template** saved in Settings (or the built-in one). Placeholders `{report}`, `{details}` (filters / count), `{file}`, `{date}` are filled in when sending; the message is HTML-escaped. DEOs and verifiers can e-mail their own payments **only to their registered e-mail**.
 
 E-mail exports need SMTP; without it they answer `503 MAIL_DISABLED`. Attachments are limited to 15 MB.
 
