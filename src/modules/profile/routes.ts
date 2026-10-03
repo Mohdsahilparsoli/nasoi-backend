@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { meetingPlatform, setMyMeetingLink } from "../connect/service.js";
 import { prisma } from "../../db.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
@@ -32,6 +33,7 @@ profileRouter.get("/me", requireAuth(), async (req, res) => {
   res.json({
     user: {
       id: u.id, role: u.role, name: u.name, mobile: u.mobile, email: u.email, status: u.status, statusReason: u.statusReason, joinedAt: u.createdAt,
+      meetingLink: u.meetingLink, meetingPlatform: u.meetingLink ? meetingPlatform(u.meetingLink) : null,
       profile: p && {
         fatherName: p.fatherName, motherName: p.motherName, dob: p.dob.toISOString().slice(0, 10), gender: p.gender,
         category: p.category, religion: p.religion, altMobile: p.altMobile, qualification: p.qualification,
@@ -53,6 +55,12 @@ const contactBody = z.object({
 });
 
 /** PATCH /api/v1/profile/me/contact */
+/** PATCH /profile/me/meeting-link { link } – my personal Zoom / Google Meet room ("" removes it). */
+profileRouter.patch("/me/meeting-link", requireAuth(), async (req, res) => {
+  const link = z.object({ link: z.string().max(600).default("") }).parse(req.body ?? {}).link.trim();
+  res.json(await setMyMeetingLink(req, { sub: req.auth!.sub, role: req.auth!.role }, link));
+});
+
 profileRouter.patch("/me/contact", requireAuth(), async (req, res) => {
   const b = contactBody.parse(req.body);
   const id = req.auth!.sub;
@@ -163,7 +171,7 @@ profileRouter.post("/me/photo", requireAuth(), async (req, res) => {
  */
 export const usersRouter = Router();
 usersRouter.get("/:id/photo", requireAuth(), async (req, res) => {
-  const id = z.string().regex(/^[A-Z]{2,5}\d{0,8}$/).safeParse(String(req.params.id).toUpperCase());
+  const id = z.string().regex(/^[A-Z]{2,5}(-\d{2,6}-\d{4}|\d{0,8})$/).safeParse(String(req.params.id).toUpperCase());
   if (!id.success || !(await canSeePhoto(req.auth!, id.data))) throw new HttpError(404, "Photo not found.", "NOT_FOUND");
   const d = await prisma().document.findFirst({ where: { userId: id.data, kind: "photo", attachedAt: { not: null } }, orderBy: { createdAt: "desc" } });
   if (!d) throw new HttpError(404, "Photo not found.", "NOT_FOUND");

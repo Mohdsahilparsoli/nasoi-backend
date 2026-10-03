@@ -44,19 +44,19 @@ const call = (token: string, method: string, path: string, body?: unknown) =>
   fetch(base + "/api/v1" + path, { method, headers: { ...H, authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined });
 const tomorrow = () => new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
 const work = (over: Record<string, unknown> = {}) => ({
-  deoId: "DEO126", taskType: "Data Entry Services", recordType: "school", verifierId: "VR101", verifierRate: 2, target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
+  deoId: "DEO-01-2026", taskType: "Data Entry Services", recordType: "school", verifierId: "VR-01-2026", verifierRate: 2, target: 50, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
   block: "Mawana", village: "Kithore", pincode: PIN1, deadline: tomorrow(), instructions: "Cover all government schools.\nStart with Class 10.", ...over,
 });
 
 before(async () => {
   await (await import("./fixtures.js")).ensureFixtures();
-  await prisma().assignment.deleteMany({ where: { deoId: { in: ["DEO126", "DEO127"] } } });
-  await prisma().notification.deleteMany({ where: { userId: { in: ["DEO126", "DEO127"] } } });
+  await prisma().assignment.deleteMany({ where: { deoId: { in: ["DEO-01-2026", "DEO-02-2026"] } } });
+  await prisma().notification.deleteMany({ where: { userId: { in: ["DEO-01-2026", "DEO-02-2026"] } } });
   await new Promise<void>((r) => smtp.listen(2590, "127.0.0.1", r));
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  [admin, deo1, deo2, vr] = await Promise.all([login("ADMIN", "Admin@2026"), login("DEO126", "Abcd@2026"), login("DEO127", "Abcd@2026"), login("VR101", "Abcd@2026")]);
+  [admin, deo1, deo2, vr] = await Promise.all([login("ADMIN", "Admin@2026"), login("DEO-01-2026", "Abcd@2026"), login("DEO-02-2026", "Abcd@2026"), login("VR-01-2026", "Abcd@2026")]);
 });
 after(async () => {
   server.close();
@@ -75,14 +75,14 @@ describe("admin: operators and assignments", () => {
     const r = await call(admin, "GET", "/admin/operators");
     assert.equal(r.status, 200);
     const { operators } = await r.json();
-    const d = operators.find((o: { id: string }) => o.id === "DEO126");
+    const d = operators.find((o: { id: string }) => o.id === "DEO-01-2026");
     assert.ok(d, "DEO126 listed");
     assert.equal(d.eligible, true);
     assert.equal(d.currentAssignment, null);
-    assert.ok(operators.some((o: { id: string }) => o.id === "VR101"), "verifiers are employees too");
+    assert.ok(operators.some((o: { id: string }) => o.id === "VR-01-2026"), "verifiers are employees too");
     assert.ok(!operators.some((o: { id: string }) => o.id === "ADMIN"), "the admin is not an employee");
     const s = await (await call(admin, "GET", "/admin/operators?q=priya")).json();
-    assert.deepEqual(s.operators.map((o: { id: string }) => o.id), ["DEO127"]);
+    assert.deepEqual(s.operators.map((o: { id: string }) => o.id), ["DEO-02-2026"]);
   });
 
   test("validation", async () => {
@@ -94,7 +94,7 @@ describe("admin: operators and assignments", () => {
       assert.equal(r.status, 400, JSON.stringify(over));
       assert.match((await r.json()).error.message, msg);
     }
-    assert.equal((await call(admin, "POST", "/admin/assignments", work({ deoId: "VR101" }))).status, 404, "verifier cannot get DEO work");
+    assert.equal((await call(admin, "POST", "/admin/assignments", work({ deoId: "VR-01-2026" }))).status, 404, "verifier cannot get DEO work");
   });
 
   let first = "";
@@ -132,22 +132,22 @@ describe("admin: operators and assignments", () => {
     const busy = await call(admin, "POST", "/admin/assignments", work({ pincode: PIN2 }));
     assert.equal(busy.status, 409);
     assert.match((await busy.json()).error.message, /already has active work/);
-    const pinBusy = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO127" }));
+    const pinBusy = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO-02-2026" }));
     assert.equal(pinBusy.status, 409);
-    assert.match((await pinBusy.json()).error.message, new RegExp(`PIN code ${PIN1} is already assigned to DEO126`));
+    assert.match((await pinBusy.json()).error.message, new RegExp(`PIN code ${PIN1} is already assigned to DEO-01-2026`));
     const list = await (await call(admin, "GET", "/admin/operators")).json();
-    const d = list.operators.find((o: { id: string }) => o.id === "DEO126");
+    const d = list.operators.find((o: { id: string }) => o.id === "DEO-01-2026");
     assert.equal(d.eligible, false);
     assert.equal(d.currentAssignment.id, first);
   });
 
   test("parallel requests cannot double-assign a DEO", async () => {
     const [a, b] = await Promise.all([
-      call(admin, "POST", "/admin/assignments", work({ deoId: "DEO127", pincode: PIN2 })),
-      call(admin, "POST", "/admin/assignments", work({ deoId: "DEO127", pincode: pin() })),
+      call(admin, "POST", "/admin/assignments", work({ deoId: "DEO-02-2026", pincode: PIN2 })),
+      call(admin, "POST", "/admin/assignments", work({ deoId: "DEO-02-2026", pincode: pin() })),
     ]);
     assert.deepEqual([a.status, b.status].sort(), [201, 409]);
-    const active = await prisma().assignment.count({ where: { deoId: "DEO127", status: "active" } });
+    const active = await prisma().assignment.count({ where: { deoId: "DEO-02-2026", status: "active" } });
     assert.equal(active, 1);
   });
 
@@ -167,41 +167,41 @@ describe("admin: operators and assignments", () => {
   });
 
   test("employee detail; inactive / rejected / active", async () => {
-    const d = await (await call(admin, "GET", "/admin/operators/deo126")).json();
-    assert.equal(d.operator.id, "DEO126");
+    const d = await (await call(admin, "GET", "/admin/operators/deo-01-2026")).json();
+    assert.equal(d.operator.id, "DEO-01-2026");
     assert.equal(d.operator.role, "deo");
     assert.equal(d.operator.assignments.length, 2);
-    const v = await (await call(admin, "GET", "/admin/operators/VR101")).json();
+    const v = await (await call(admin, "GET", "/admin/operators/VR-01-2026")).json();
     assert.equal(v.operator.role, "verifier", "verifiers are employees too");
     const list = await (await call(admin, "GET", "/admin/operators")).json();
-    assert.ok(list.operators.some((o: { id: string }) => o.id === "VR101") && list.operators.some((o: { id: string }) => o.id === "DEO126"));
+    assert.ok(list.operators.some((o: { id: string }) => o.id === "VR-01-2026") && list.operators.some((o: { id: string }) => o.id === "DEO-01-2026"));
     const deosOnly = await (await call(admin, "GET", "/admin/operators?role=deo")).json();
     assert.ok(deosOnly.operators.every((o: { role: string }) => o.role === "deo"));
 
-    await prisma().assignment.updateMany({ where: { deoId: "DEO127", status: "active" }, data: { status: "cancelled" } });
+    await prisma().assignment.updateMany({ where: { deoId: "DEO-02-2026", status: "active" }, data: { status: "cancelled" } });
     // Inactive: can still log in, but gets no work.
-    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "inactive" })).status, 200);
+    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO-02-2026/status", { status: "inactive" })).status, 200);
     assert.equal((await call(deo2, "GET", "/notifications")).status, 200, "inactive employee stays logged in");
-    const inactiveAssign = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO127", pincode: pin() }));
+    const inactiveAssign = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO-02-2026", pincode: pin() }));
     assert.equal(inactiveAssign.status, 409);
     assert.match((await inactiveAssign.json()).error.message, /inactive/);
     // Reject needs a reason and logs the employee out.
-    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "rejected" })).status, 400);
-    const rej = await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "rejected", reason: "Aadhaar photo not readable" });
+    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO-02-2026/status", { status: "rejected" })).status, 400);
+    const rej = await call(admin, "PATCH", "/admin/operators/DEO-02-2026/status", { status: "rejected", reason: "Aadhaar photo not readable" });
     assert.equal(rej.status, 200);
     assert.equal((await call(deo2, "GET", "/notifications")).status, 401, "rejected employee is logged out");
-    const l = await fetch(base + "/api/v1/auth/login", { method: "POST", headers: H, body: JSON.stringify({ loginId: "DEO127", password: "Abcd@2026" }) });
+    const l = await fetch(base + "/api/v1/auth/login", { method: "POST", headers: H, body: JSON.stringify({ loginId: "DEO-02-2026", password: "Abcd@2026" }) });
     assert.equal(l.status, 403);
     const le = (await l.json()).error;
     assert.equal(le.code, "ACCOUNT_REJECTED");
     assert.match(le.message, /Aadhaar photo not readable/);
-    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "active" })).status, 200);
-    deo2 = await login("DEO127", "Abcd@2026");
+    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO-02-2026/status", { status: "active" })).status, 200);
+    deo2 = await login("DEO-02-2026", "Abcd@2026");
     // Block and village are not needed any more.
-    const { block: _b, village: _v, ...noArea } = work({ deoId: "DEO127", pincode: pin() });
+    const { block: _b, village: _v, ...noArea } = work({ deoId: "DEO-02-2026", pincode: pin() });
     const ok = await call(admin, "POST", "/admin/assignments", noArea);
     assert.equal(ok.status, 201);
-    await prisma().assignment.updateMany({ where: { deoId: "DEO127", status: "active" }, data: { status: "cancelled" } });
+    await prisma().assignment.updateMany({ where: { deoId: "DEO-02-2026", status: "active" }, data: { status: "cancelled" } });
   });
 
   test("notifications can be marked read", async () => {

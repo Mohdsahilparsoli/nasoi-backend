@@ -11,6 +11,7 @@ import { registrationRouter } from "./modules/registration/routes.js";
 import { adminRouter } from "./modules/admin/routes.js";
 import { formsRouter, meRouter, notificationsRouter } from "./modules/notifications/routes.js";
 import { verifierRouter } from "./modules/verifier/routes.js";
+import { connectRouter } from "./modules/connect/routes.js";
 import { myPaymentsRouter } from "./modules/payments/routes.js";
 
 export function createApp() {
@@ -59,6 +60,7 @@ export function createApp() {
   app.use("/api/v1/me", meRouter);
   app.use("/api/v1/entry-forms", formsRouter);
   app.use("/api/v1/verifier", verifierRouter);
+  app.use("/api/v1/connect", connectRouter);
 
   app.use(notFound);
   app.use(errorHandler);

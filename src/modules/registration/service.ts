@@ -13,10 +13,24 @@ import { sha256 } from "./uploads.js";
 const UPLOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** Readable IDs: DEO1001, DEO1002 … and VR201, VR202 … */
-const ID_FORMAT: Record<"deo" | "verifier", { key: string; prefix: string; start: number }> = {
-  deo: { key: "deo", prefix: "DEO", start: 1000 },
-  verifier: { key: "verifier", prefix: "VR", start: 200 },
-};
+/** Employee IDs: DEO-01-2026, VR-01-2026 – number per role, restarting every registration year (IST). */
+const ID_PREFIX: Record<"deo" | "verifier", string> = { deo: "DEO", verifier: "VR" };
+const istYear = () => Number(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric" }).format(new Date()));
+
+async function nextEmployeeId(tx: Prisma.TransactionClient, role: "deo" | "verifier") {
+  const year = istYear();
+  const key = `${role}:${year}`;
+  // The counter is normally in step; skip any number already taken (e.g. created by hand).
+  for (let i = 0; i < 50; i++) {
+    const [{ value }] = await tx.$queryRaw<{ value: number }[]>`
+      insert into id_counters (key, value) values (${key}, 1)
+      on conflict (key) do update set value = id_counters.value + 1
+      returning value`;
+    const id = `${ID_PREFIX[role]}-${String(value).padStart(2, "0")}-${year}`;
+    if (!(await tx.user.findUnique({ where: { id }, select: { id: true } }))) return id;
+  }
+  throw new HttpError(503, "Could not create a User ID. Please try again.", "ID_BUSY");
+}
 
 const DOC_LABEL: Record<DocumentKind, string> = {
   aadhaar: "Aadhaar card",
@@ -58,15 +72,10 @@ export async function register(req: Request, v: RegistrationInput) {
   }
 
   const passwordHash = await bcrypt.hash(v.password, BCRYPT_COST);
-  const fmt = ID_FORMAT[v.role];
 
   try {
     const user = await db.$transaction(async (tx) => {
-      const [{ value }] = await tx.$queryRaw<{ value: number }[]>`
-        insert into id_counters (key, value) values (${fmt.key}, ${fmt.start + 1}::int)
-        on conflict (key) do update set value = id_counters.value + 1
-        returning value`;
-      const id = `${fmt.prefix}${value}`;
+      const id = await nextEmployeeId(tx, v.role);
 
       const u = await tx.user.create({
         data: {

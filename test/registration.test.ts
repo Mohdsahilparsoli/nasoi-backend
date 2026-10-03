@@ -137,7 +137,7 @@ describe("registration", () => {
     const r = await submit(body);
     assert.equal(r.status, 201, await r.clone().text());
     const { user } = await r.json();
-    assert.match(user.id, /^DEO\d{4,}$/);
+    assert.match(user.id, /^DEO-\d{2,}-20\d{2}$/);
     assert.equal(user.role, "deo");
     assert.equal(user.name, "AMIT SINGH");
     deo = { id: user.id, mobile: body.mobile, email: body.email, aadhaar: body.aadhaar };
@@ -149,7 +149,7 @@ describe("registration", () => {
     const r = await submit(body);
     assert.equal(r.status, 201, await r.clone().text());
     const { user } = await r.json();
-    assert.match(user.id, /^VR\d{3,}$/);
+    assert.match(user.id, /^VR-\d{2,}-20\d{2}$/);
     const l = await login(user.id, "Strong123");
     assert.equal((await l.json()).user.role, "verifier");
   });
@@ -232,9 +232,9 @@ describe("registration", () => {
     assert.ok(Buffer.from(await f.arrayBuffer()).subarray(1, 4).toString() === "PNG", "decrypted file is the original PNG");
 
     // another DEO and a verifier cannot (only the owner and the admin)
-    const other = (await (await login("DEO127", "Abcd@2026")).json()).accessToken;
+    const other = (await (await login("DEO-02-2026", "Abcd@2026")).json()).accessToken;
     assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`, { headers: { authorization: `Bearer ${other}` } })).status, 404);
-    const vr = (await (await login("VR101", "Abcd@2026")).json()).accessToken;
+    const vr = (await (await login("VR-01-2026", "Abcd@2026")).json()).accessToken;
     assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`, { headers: { authorization: `Bearer ${vr}` } })).status, 404);
     const adm = (await (await login("ADMIN", "Admin@2026")).json()).accessToken;
     assert.equal((await fetch(base + `/api/v1/documents/${photo.id}`, { headers: { authorization: `Bearer ${adm}` } })).status, 200);

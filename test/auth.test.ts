@@ -46,7 +46,7 @@ describe("auth", () => {
   });
 
   test("blocks foreign origins", async () => {
-    const r = await post("/api/v1/auth/login", { loginId: "DEO126", password: "Abcd@2026" }, { origin: "https://evil.example" });
+    const r = await post("/api/v1/auth/login", { loginId: "DEO-01-2026", password: "Abcd@2026" }, { origin: "https://evil.example" });
     assert.equal(r.status, 403);
   });
 
@@ -72,41 +72,49 @@ describe("auth", () => {
     assert.equal(a.user.role, "admin");
   });
 
+  test("an old User ID (before DEO-01-2026 IDs) still logs in", async () => {
+    await query("insert into user_id_aliases (old_id, user_id) values ('DEO9126', 'DEO-01-2026') on conflict do nothing");
+    const r = await post("/api/v1/auth/login", { loginId: "deo9126", password: "Abcd@2026" });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).user.id, "DEO-01-2026");
+    await query("delete from user_id_aliases where old_id = 'DEO9126'");
+  });
+
   test("wrong password and unknown user give the same message", async () => {
-    const a = await post("/api/v1/auth/login", { loginId: "DEO127", password: "nope" });
+    const a = await post("/api/v1/auth/login", { loginId: "DEO-02-2026", password: "nope" });
     const b = await post("/api/v1/auth/login", { loginId: "NOBODY", password: "nope" });
     const c = await post("/api/v1/auth/login", { loginId: "' or 1=1 --", password: "x" });
     assert.equal(a.status, 401);
     assert.equal(b.status, 401);
     assert.equal(c.status, 401);
     assert.equal((await a.json()).error.message, (await b.json()).error.message);
-    await query("update users set failed_login_count = 0 where id = 'DEO127'");
+    await query("update users set failed_login_count = 0 where id = 'DEO-02-2026'");
   });
 
   test("locks the account after 5 wrong passwords", async () => {
     let last: Response | undefined;
     for (let i = 0; i < 5; i++) last = await post("/api/v1/auth/login", { loginId: "9811100022", password: "wrong" + i }, { "x-forwarded-for": `10.0.0.${i}` });
     assert.equal(last!.status, 429);
-    const ok = await post("/api/v1/auth/login", { loginId: "DEO127", password: "Abcd@2026" }, { "x-forwarded-for": "10.0.1.1" });
+    const ok = await post("/api/v1/auth/login", { loginId: "DEO-02-2026", password: "Abcd@2026" }, { "x-forwarded-for": "10.0.1.1" });
     assert.equal(ok.status, 429, "even the right password is refused while locked");
-    await query("update users set failed_login_count = 0, locked_until = null where id = 'DEO127'");
+    await query("update users set failed_login_count = 0, locked_until = null where id = 'DEO-02-2026'");
   });
 
   test("blocked account is refused only after the correct password", async () => {
-    await query("update users set status = 'blocked' where id = 'DEO127'");
-    const r = await post("/api/v1/auth/login", { loginId: "DEO127", password: "Abcd@2026" });
+    await query("update users set status = 'blocked' where id = 'DEO-02-2026'");
+    const r = await post("/api/v1/auth/login", { loginId: "DEO-02-2026", password: "Abcd@2026" });
     assert.equal(r.status, 403);
-    await query("update users set status = 'active' where id = 'DEO127'");
+    await query("update users set status = 'active' where id = 'DEO-02-2026'");
   });
 
   test("me, refresh rotation, reuse detection and logout", async () => {
-    const login = await post("/api/v1/auth/login", { loginId: "VR101", password: "Abcd@2026" });
+    const login = await post("/api/v1/auth/login", { loginId: "VR-01-2026", password: "Abcd@2026" });
     const { accessToken } = await login.json();
     const c1 = pair(cookieOf(login));
 
     const me = await fetch(base + "/api/v1/auth/me", { headers: { authorization: `Bearer ${accessToken}` } });
     assert.equal(me.status, 200);
-    assert.equal((await me.json()).user.id, "VR101");
+    assert.equal((await me.json()).user.id, "VR-01-2026");
     assert.equal((await fetch(base + "/api/v1/auth/me")).status, 401);
     assert.equal((await fetch(base + "/api/v1/auth/me", { headers: { authorization: "Bearer a.b.c" } })).status, 401);
 
@@ -130,7 +138,7 @@ describe("auth", () => {
     assert.equal((await post("/api/v1/auth/refresh", { role: "verifier" }, { cookie: c2 })).status, 401, "whole session killed");
 
     // logout
-    const l = await post("/api/v1/auth/login", { loginId: "VR101", password: "Abcd@2026" });
+    const l = await post("/api/v1/auth/login", { loginId: "VR-01-2026", password: "Abcd@2026" });
     const t = (await l.json()).accessToken;
     const lc = pair(cookieOf(l));
     assert.equal((await post("/api/v1/auth/logout", { role: "verifier" }, { cookie: lc })).status, 200);
@@ -139,8 +147,8 @@ describe("auth", () => {
   });
 
   test("change password logs out other devices", async () => {
-    const a = await (await post("/api/v1/auth/login", { loginId: "DEO126", password: "Abcd@2026" })).json();
-    const b = await (await post("/api/v1/auth/login", { loginId: "DEO126", password: "Abcd@2026" })).json();
+    const a = await (await post("/api/v1/auth/login", { loginId: "DEO-01-2026", password: "Abcd@2026" })).json();
+    const b = await (await post("/api/v1/auth/login", { loginId: "DEO-01-2026", password: "Abcd@2026" })).json();
     const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
     const wrong = await post("/api/v1/auth/change-password", { currentPassword: "bad", newPassword: "NewPass123" }, auth(a.accessToken));
@@ -152,11 +160,11 @@ describe("auth", () => {
 
     assert.equal((await fetch(base + "/api/v1/auth/me", { headers: auth(a.accessToken) })).status, 200, "current device stays in");
     assert.equal((await fetch(base + "/api/v1/auth/me", { headers: auth(b.accessToken) })).status, 401, "other device logged out");
-    assert.equal((await post("/api/v1/auth/login", { loginId: "DEO126", password: "NewPass123" })).status, 200);
+    assert.equal((await post("/api/v1/auth/login", { loginId: "DEO-01-2026", password: "NewPass123" })).status, 200);
 
     // restore demo password
     await post("/api/v1/auth/change-password", { currentPassword: "NewPass123", newPassword: "Abcd@2026" }, auth(a.accessToken));
-    assert.equal((await post("/api/v1/auth/login", { loginId: "DEO126", password: "Abcd@2026" })).status, 200);
+    assert.equal((await post("/api/v1/auth/login", { loginId: "DEO-01-2026", password: "Abcd@2026" })).status, 200);
   });
 
   test("rejects oversized and malformed bodies", async () => {

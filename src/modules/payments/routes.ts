@@ -35,7 +35,7 @@ adminPayoutsRouter.post("/payouts/export/email", async (req, res) => {
 /** GET /admin/payments?role=&userId= – payment receipts. */
 adminPayoutsRouter.get("/payments", async (req, res) => {
   const r = req.query.role === "deo" || req.query.role === "verifier" ? req.query.role : undefined;
-  const userId = typeof req.query.userId === "string" && /^[A-Za-z]{2,5}\d{0,8}$/.test(req.query.userId) ? req.query.userId : undefined;
+  const userId = typeof req.query.userId === "string" && /^[A-Za-z]{2,5}(-\d{2,6}-\d{4}|\d{0,8})$/.test(req.query.userId) ? req.query.userId : undefined;
   res.json({ payments: await listPayments({ role: r, userId }) });
 });
 

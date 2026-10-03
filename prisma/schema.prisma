@@ -31,7 +31,7 @@ enum UserStatus {
 
 /// Every portal account: Data Entry Operator, Verifier or Super Admin.
 model User {
-  id                String     @id // DEO126, VR101, ADMIN …
+  id                String     @id // DEO-01-2026, VR-01-2026, ADMIN …
   role              Role
   name              String
   mobile            String?    @unique @db.VarChar(10)
@@ -40,6 +40,7 @@ model User {
   status            UserStatus @default(active)
   statusReason      String?    @map("status_reason") // shown to the employee (e.g. why rejected)
   statusChangedAt   DateTime?  @map("status_changed_at") @db.Timestamptz(6)
+  meetingLink       String?    @map("meeting_link") @db.VarChar(500) // personal Zoom / Google Meet room
   failedLoginCount  Int        @default(0) @map("failed_login_count")
   lockedUntil       DateTime?  @map("locked_until") @db.Timestamptz(6)
   lastLoginAt       DateTime?  @map("last_login_at") @db.Timestamptz(6)
@@ -62,6 +63,11 @@ model User {
   payments            Payment[]      @relation("PaymentsReceived")
   paymentsRecorded    Payment[]      @relation("PaymentsRecorded")
   verifications       Verification[]
+  idAliases           UserIdAlias[]
+  meetingsCreated     Meeting[]            @relation("MeetingsCreated")
+  meetings            MeetingParticipant[]
+  requestsSent        ConnectRequest[]     @relation("RequestsSent")
+  requestsReceived    ConnectRequest[]     @relation("RequestsReceived")
 
   @@map("users")
 }
@@ -270,6 +276,7 @@ model Entry {
   ratePerEntry       Int         @map("rate_per_entry") // copied from the assignment when submitted
   status             EntryStatus @default(pending)
   rejectReason       String?     @map("reject_reason")
+  rejectFields       Json?       @map("reject_fields") // form field keys the verifier marked wrong
   verifierId         String?     @map("verifier_id") // verifier this entry is assigned to (automatic)
   assignedAt         DateTime?   @map("assigned_at") @db.Timestamptz(6)
   verifiedById       String?     @map("verified_by_id")
@@ -305,7 +312,8 @@ model Verification {
   deoId      String               @map("deo_id")
   decision   VerificationDecision
   reason     String?
-  rate       Int // ₹ paid to the verifier for this action (from settings at that time)
+  fields     Json? // field keys marked wrong (rejections)
+  rate       Int // ₹ earned by the verifier: the area's rate when approved, 0 when rejected
   createdAt  DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
 
   entry    Entry @relation(fields: [entryId], references: [id], onDelete: Cascade)
@@ -352,4 +360,95 @@ model Payment {
   @@index([userId, paidOn(sort: Desc)])
   @@index([role, paidOn(sort: Desc)])
   @@map("payments")
+}
+
+/// Old login IDs (e.g. DEO1006) that still work after the move to DEO-01-2026 style IDs.
+model UserIdAlias {
+  oldId     String   @id @map("old_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId])
+  @@map("user_id_aliases")
+}
+
+enum MeetingStatus {
+  scheduled
+  cancelled
+}
+
+/// A Zoom / Google Meet meeting between the admin, DEOs and verifiers.
+model Meeting {
+  id          String        @id // MTG000001
+  title       String        @db.VarChar(120)
+  platform    String        @db.VarChar(20) // zoom | google_meet | teams | other
+  link        String        @db.VarChar(500)
+  startsAt    DateTime      @map("starts_at") @db.Timestamptz(6)
+  durationMin Int           @default(30) @map("duration_min")
+  notes       String?       @db.VarChar(1000)
+  entryId     String?       @map("entry_id") // optional: the entry the meeting is about
+  status      MeetingStatus @default(scheduled)
+  createdById String        @map("created_by_id")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy    User                 @relation("MeetingsCreated", fields: [createdById], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  participants MeetingParticipant[]
+  request      ConnectRequest?
+
+  @@index([startsAt])
+  @@map("meetings")
+}
+
+model MeetingParticipant {
+  meetingId String @map("meeting_id")
+  userId    String @map("user_id")
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@id([meetingId, userId])
+  @@index([userId])
+  @@map("meeting_participants")
+}
+
+enum RequestKind {
+  meeting
+  entry
+  general
+}
+
+enum RequestStatus {
+  open
+  accepted
+  declined
+  closed
+}
+
+/// A request from one person to another: "please set up a meeting" or a question about an entry.
+model ConnectRequest {
+  id          String        @id // REQ000001
+  kind        RequestKind
+  fromId      String        @map("from_id")
+  toId        String        @map("to_id")
+  entryId     String?       @map("entry_id")
+  subject     String        @db.VarChar(120)
+  message     String        @db.VarChar(1000)
+  preferredAt DateTime?     @map("preferred_at") @db.Timestamptz(6) // suggested meeting time
+  status      RequestStatus @default(open)
+  reply       String?       @db.VarChar(1000)
+  respondedAt DateTime?     @map("responded_at") @db.Timestamptz(6)
+  meetingId   String?       @unique @map("meeting_id")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  from    User     @relation("RequestsSent", fields: [fromId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  to      User     @relation("RequestsReceived", fields: [toId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  meeting Meeting? @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+
+  @@index([toId, status])
+  @@index([fromId, createdAt(sort: Desc)])
+  @@map("connect_requests")
 }

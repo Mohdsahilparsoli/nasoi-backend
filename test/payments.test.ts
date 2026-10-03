@@ -32,8 +32,8 @@ let base = "";
 let server: ReturnType<ReturnType<typeof createApp>["listen"]>;
 const H = { "content-type": "application/json", "x-nasoi-client": "web" };
 let admin = "", deo = "", vr = "", other = "";
-const DEO = "DEO129";
-const VR = "VR102";
+const DEO = "DEO-04-2026";
+const VR = "VR-02-2026";
 const txn = () => `UTR${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
 const login = async (loginId: string, password: string) =>
@@ -51,7 +51,7 @@ before(async () => {
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  [admin, deo, vr, other] = await Promise.all([login("ADMIN", "Admin@2026"), login(DEO, "Abcd@2026"), login(VR, "Abcd@2026"), login("DEO127", "Abcd@2026")]);
+  [admin, deo, vr, other] = await Promise.all([login("ADMIN", "Admin@2026"), login(DEO, "Abcd@2026"), login(VR, "Abcd@2026"), login("DEO-02-2026", "Abcd@2026")]);
 });
 after(async () => {
   server.close();
@@ -133,7 +133,7 @@ describe("employees, payouts and e-mailed files", () => {
     assert.equal((await call(admin, "GET", "/payments/me")).status, 403);
     const f = await fetch(base + "/api/v1/payments/me/export", { headers: { ...H, authorization: `Bearer ${deo}` } });
     assert.equal(f.status, 200);
-    assert.match(f.headers.get("content-disposition") ?? "", /nasoi-payments_deo129_/);
+    assert.match(f.headers.get("content-disposition") ?? "", /nasoi-payments_deo-04-2026_/);
   });
 
   test("files can be e-mailed (as attachments); employees only to their own e-mail", async () => {
@@ -165,10 +165,10 @@ describe("employees, payouts and e-mailed files", () => {
     assert.ok(mails[0].to === "accounts@example.org" && /filename="?nasoi-verifier-payouts_/.test(mails[0].raw), "payouts xlsx attached");
     assert.ok(mails[0].raw.includes("Verifier payouts report"), "default template filled");
     assert.equal(mails[1].to, "accounts@example.org,boss@example.org,audit@example.org");
-    assert.ok(/filename="?nasoi-approved-entries_deo129_/.test(mails[1].raw), "entries csv attached");
+    assert.ok(/filename="?nasoi-approved-entries_deo-04-2026_/.test(mails[1].raw), "entries csv attached");
     assert.ok(/Subject: Custom report \d{2} \w{3} \d{4}/.test(mails[1].raw), "custom subject with {date}");
-    assert.ok(mails[1].raw.includes("Hello team") && mails[1].raw.includes("DEO DEO129"), "custom message with {details}");
-    assert.ok(mails[2].to === "meena.demo@example.com" && /filename="?nasoi-payments_deo129_/.test(mails[2].raw));
+    assert.ok(mails[1].raw.includes("Hello team") && mails[1].raw.includes("DEO DEO-04-2026"), "custom message with {details}");
+    assert.ok(mails[2].to === "meena.demo@example.com" && /filename="?nasoi-payments_deo-04-2026_/.test(mails[2].raw));
   });
 
   test("admin can save and reset the default e-mail template", async () => {

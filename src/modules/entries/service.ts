@@ -23,6 +23,7 @@ export function toPublicEntry(e: Entry) {
     // ratePerEntry is never sent to DEOs or verifiers – only the admin sees rates.
     status: e.status,
     rejectReason: e.rejectReason,
+    rejectFields: Array.isArray(e.rejectFields) ? (e.rejectFields as string[]) : [],
     verifiedAt: e.verifiedAt,
     resubmitCount: e.resubmitCount,
     submittedAt: e.submittedAt,

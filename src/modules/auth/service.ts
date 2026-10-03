@@ -39,6 +39,15 @@ export function normaliseLoginId(raw: string) {
   return { kind: "id" as const, value: v.toUpperCase() };
 }
 
+/** Finds the account; an old User ID (e.g. DEO1006, before DEO-01-2026 IDs) still works. */
+async function findLoginUser(key: ReturnType<typeof normaliseLoginId>) {
+  const db = prisma();
+  const user = await db.user.findFirst({ where: { [key.kind]: key.value } });
+  if (user || key.kind !== "id") return user;
+  const alias = await db.userIdAlias.findUnique({ where: { oldId: key.value }, select: { user: true } });
+  return alias?.user ?? null;
+}
+
 function minutesLeft(until: Date) {
   return Math.max(1, Math.ceil((until.getTime() - Date.now()) / 60_000));
 }
@@ -62,7 +71,7 @@ export async function revokeSession(sessionId: string, reason: string) {
 export async function login(req: Request, loginId: string, password: string) {
   const c = config();
   const key = normaliseLoginId(loginId);
-  const user = await prisma().user.findFirst({ where: { [key.kind]: key.value } });
+  const user = await findLoginUser(key);
 
   if (!user) {
     await bcrypt.compare(password, DUMMY_HASH);

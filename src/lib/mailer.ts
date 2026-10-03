@@ -35,4 +35,4 @@ export async function sendMail(msg: { to: string | string[]; cc?: string[]; subj
   await mailer().sendMail({ from: config().SMTP_FROM, ...msg });
 }
 
-export { accountStatusEmail, assignmentEmail, paymentEmail, registrationEmail, resetPasswordEmail, verifierAreaEmail } from "./email-templates.js";
+export { accountStatusEmail, assignmentEmail, meetingEmail, paymentEmail, registrationEmail, requestEmail, resetPasswordEmail, verifierAreaEmail } from "./email-templates.js";

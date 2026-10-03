@@ -15,7 +15,7 @@ let base = "";
 let server: ReturnType<ReturnType<typeof createApp>["listen"]>;
 const H = { "content-type": "application/json", "x-nasoi-client": "web" };
 let admin = "", deo = "", vr = "", vr2 = "";
-const DEO = "DEO129";
+const DEO = "DEO-04-2026";
 const PIN = String(300000 + Math.floor(Math.random() * 600000));
 const udise = () => String(Math.floor(1e10 + Math.random() * 8.9e10));
 const login = async (loginId: string, password: string) =>
@@ -30,15 +30,15 @@ const summary = async () => (await call(vr, "GET", "/verifier/summary")).json();
 before(async () => {
   await (await import("./fixtures.js")).ensureFixtures();
   await prisma().assignment.deleteMany({ where: { deoId: DEO } });
-  await prisma().verification.deleteMany({ where: { verifierId: "VR101" } });
+  await prisma().verification.deleteMany({ where: { verifierId: "VR-01-2026" } });
   // VR101 starts empty: hand its old entries and any unassigned pending entries to VR102.
-  await prisma().entry.updateMany({ where: { OR: [{ verifierId: "VR101" }, { verifierId: null, status: "pending" }] }, data: { verifierId: "VR102" } });
+  await prisma().entry.updateMany({ where: { OR: [{ verifierId: "VR-01-2026" }, { verifierId: null, status: "pending" }] }, data: { verifierId: "VR-02-2026" } });
   await prisma().notification.deleteMany({ where: { userId: DEO } });
   await prisma().appSetting.upsert({ where: { id: 1 }, create: { id: 1 }, update: { verifierRate: 2 } });
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  [admin, deo, vr, vr2] = await Promise.all([login("ADMIN", "Admin@2026"), login(DEO, "Abcd@2026"), login("VR101", "Abcd@2026"), login("VR102", "Abcd@2026")]);
+  [admin, deo, vr, vr2] = await Promise.all([login("ADMIN", "Admin@2026"), login(DEO, "Abcd@2026"), login("VR-01-2026", "Abcd@2026"), login("VR-02-2026", "Abcd@2026")]);
 });
 after(async () => {
   server.close();
@@ -55,7 +55,7 @@ describe("verifier", () => {
 
   test("entries go to the verifier the admin chose for the area", async () => {
     const a = await call(admin, "POST", "/admin/assignments", {
-      deoId: DEO, taskType: "Data Entry Services", recordType: "school", verifierId: "VR101", verifierRate: 2, target: 5, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
+      deoId: DEO, taskType: "Data Entry Services", recordType: "school", verifierId: "VR-01-2026", verifierRate: 2, target: 5, ratePerEntry: 10, state: "Uttar Pradesh", district: "Meerut",
       block: "Mawana", village: "Kithore", pincode: PIN, deadline: new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10),
     });
     assert.equal(a.status, 201);
@@ -65,10 +65,10 @@ describe("verifier", () => {
       ids.push((await r.json()).entry.id);
     }
     const rows = await prisma().entry.findMany({ where: { id: { in: ids } } });
-    assert.ok(rows.every((r) => r.verifierId === "VR101"), "all entries with the area's verifier");
+    assert.ok(rows.every((r) => r.verifierId === "VR-01-2026"), "all entries with the area's verifier");
     // The DEO sees the verifier's basic card – never the amounts.
     const work = await (await call(deo, "GET", "/me/assignments")).json();
-    assert.equal(work.current.verifier.id, "VR101");
+    assert.equal(work.current.verifier.id, "VR-01-2026");
     assert.ok(work.current.verifier.name && work.current.verifier.mobile);
     assert.equal(work.current.verifierRate, undefined);
     assert.equal(work.current.ratePerEntry, undefined);
@@ -96,11 +96,16 @@ describe("verifier", () => {
   test("reject needs a reason; DEO is notified", async () => {
     const bad = await call(vr, "POST", `/verifier/entries/${ids[0]}/decision`, { decision: "rejected", reason: "no" });
     assert.equal(bad.status, 400);
-    const r = await call(vr, "POST", `/verifier/entries/${ids[0]}/decision`, { decision: "rejected", reason: "UDISE code does not match the school" });
+    const r = await call(vr, "POST", `/verifier/entries/${ids[0]}/decision`, {
+      decision: "rejected",
+      reason: "UDISE code does not match the school",
+      fields: ["schoolName", "udiseCode", "notAField"],
+    });
     assert.equal(r.status, 200);
     const e = await (await call(deo, "GET", `/me/entries/${ids[0]}`)).json();
     assert.equal(e.entry.status, "rejected");
     assert.equal(e.entry.rejectReason, "UDISE code does not match the school");
+    assert.deepEqual(e.entry.rejectFields, ["udiseCode", "schoolName"], "only real fields, in form order");
     const n = await (await call(deo, "GET", "/notifications")).json();
     assert.ok(n.notifications.some((x: { title: string; link: string }) => x.title.includes("rejected") && x.link === `/deo/entries/${ids[0]}`));
   });
@@ -122,17 +127,18 @@ describe("verifier", () => {
     assert.equal(r.status, 200);
     const row = await prisma().entry.findUniqueOrThrow({ where: { id: ids[0] } });
     assert.equal(row.status, "pending");
-    assert.equal(row.verifierId, "VR101");
+    assert.equal(row.verifierId, "VR-01-2026");
     const detail = await (await call(vr, "GET", `/verifier/entries/${ids[0]}`)).json();
     assert.equal(detail.entry.history.length, 1);
     assert.equal(detail.entry.history[0].decision, "rejected");
+    assert.deepEqual(detail.entry.history[0].fields, ["udiseCode", "schoolName"]);
   });
 
-  test("income = verifier amount of the area per verified entry", async () => {
+  test("income only for FINAL approvals (a rejection earns nothing)", async () => {
     let s = await summary();
     assert.equal(s.approved, 1);
     assert.equal(s.rejected, 1);
-    assert.equal(s.income, 4);
+    assert.equal(s.income, 2, "1 approval × ₹2; the rejection earns ₹0");
     assert.equal(s.pending, 2);
     assert.equal(s.verifiedToday, 2);
     assert.equal(s.monthly.length, 1);
@@ -140,7 +146,7 @@ describe("verifier", () => {
     assert.equal(up.status, 200);
     assert.equal((await call(vr, "POST", `/verifier/entries/${ids[2]}/decision`, { decision: "approved" })).status, 200);
     s = await summary();
-    assert.equal(s.income, 6, "the area's verifier amount (₹2) is used, not the default in Settings");
+    assert.equal(s.income, 4, "the area's verifier amount (₹2) is used, not the default in Settings");
     const h = await (await call(vr, "GET", "/verifier/history?decision=approved")).json();
     assert.equal(h.history.length, 2);
     assert.equal(h.history[0].entry.id, ids[2]);
@@ -161,7 +167,7 @@ describe("verifier", () => {
     // One more approved entry whose name starts with "=" (must not become a formula).
     const r = await call(deo, "POST", "/me/entries", school({ schoolName: "=HYPERLINK(1)" }));
     const id = (await r.json()).entry.id;
-    await prisma().entry.update({ where: { id }, data: { verifierId: "VR101" } });
+    await prisma().entry.update({ where: { id }, data: { verifierId: "VR-01-2026" } });
     assert.equal((await call(vr, "POST", `/verifier/entries/${id}/decision`, { decision: "approved" })).status, 200);
     const approved = await prisma().entry.count({ where: { deoId: DEO, status: "approved" } });
 
@@ -170,7 +176,7 @@ describe("verifier", () => {
 
     const csv = await raw(admin, `/admin/entries/export?format=csv&deoId=${DEO}`);
     assert.equal(csv.status, 200);
-    assert.match(csv.headers.get("content-disposition") ?? "", /nasoi-approved-entries_deo129_.*\.csv/);
+    assert.match(csv.headers.get("content-disposition") ?? "", /nasoi-approved-entries_deo-04-2026_.*\.csv/);
     const bytes = Buffer.from(await csv.arrayBuffer());
     assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "UTF-8 BOM for Excel");
     const text = bytes.subarray(3).toString("utf8");
@@ -179,7 +185,7 @@ describe("verifier", () => {
     assert.equal(lines.length - 1, approved, "only approved entries");
     assert.ok(text.includes("'=HYPERLINK(1)"), "formula is neutralised");
 
-    const pinCsv = await (await raw(admin, `/admin/entries/export?format=csv&pincode=${PIN}&verifierId=VR101`)).text();
+    const pinCsv = await (await raw(admin, `/admin/entries/export?format=csv&pincode=${PIN}&verifierId=VR-01-2026`)).text();
     assert.equal(pinCsv.trim().split("\r\n").length - 1, approved);
     const none = await (await raw(admin, `/admin/entries/export?format=csv&deoId=${DEO}&from=2099-01-01`)).text();
     assert.equal(none.trim().split("\r\n").length, 1, "date filter: header only");
@@ -224,12 +230,12 @@ describe("verifier", () => {
 
   test("admin can change the verifier of an area; pending entries move", async () => {
     const work = await (await call(deo, "GET", "/me/assignments")).json();
-    const r = await call(admin, "PATCH", `/admin/assignments/${work.current.id}/verifier`, { verifierId: "VR102" });
+    const r = await call(admin, "PATCH", `/admin/assignments/${work.current.id}/verifier`, { verifierId: "VR-02-2026" });
     assert.equal(r.status, 200);
     const body = await r.json();
     assert.ok(body.movedEntries >= 1);
-    assert.equal(await prisma().entry.count({ where: { assignmentId: work.current.id, status: "pending", NOT: { verifierId: "VR102" } } }), 0);
+    assert.equal(await prisma().entry.count({ where: { assignmentId: work.current.id, status: "pending", NOT: { verifierId: "VR-02-2026" } } }), 0);
     const { verifiers } = await (await call(admin, "GET", "/admin/verifiers")).json();
-    assert.ok(verifiers.find((v: { id: string; activeAreas: number }) => v.id === "VR102").activeAreas >= 1);
+    assert.ok(verifiers.find((v: { id: string; activeAreas: number }) => v.id === "VR-02-2026").activeAreas >= 1);
   });
 });

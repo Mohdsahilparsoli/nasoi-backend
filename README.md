@@ -20,11 +20,12 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | POST | `/api/v1/auth/forgot-password` | – | `{ email }` → e-mails a reset link (JWT, 30 min, single-use). Same answer whether the e-mail exists or not |
 | POST | `/api/v1/auth/reset-password` | – | `{ token, newPassword }` → sets the password, logs out all devices |
 | POST | `/api/v1/registrations/uploads` | – | multipart `kind` + `file` (PDF/JPG/PNG ≤ 2 MB, type checked from file bytes) → `{ upload: { id, token } }` |
-| POST | `/api/v1/registrations` | – | Full registration form + upload refs + password → `{ user, emailSent }` and a confirmation e-mail with the ID (never the password or Aadhaar) (role `deo` → `DEO1001…`, `verifier` → `VR201…`) |
+| POST | `/api/v1/registrations` | – | Full registration form + upload refs + password → `{ user, emailSent }` and a confirmation e-mail with the ID (never the password or Aadhaar) (role `deo` → `DEO-01-2026…`, `verifier` → `VR-01-2026…`) |
 | GET  | `/api/v1/profile/me` | Bearer | Own profile (Aadhaar / account masked) and document list |
 | PATCH | `/api/v1/profile/me/contact` | Bearer | Mobile, alternate mobile, email, address |
 | PATCH | `/api/v1/profile/me/bank` | Bearer | Bank details |
 | GET  | `/api/v1/documents/:id` | Bearer | View a document (owner, verifier or admin) |
+| GET  | `/api/v1/admin/overview` | Admin | Dashboard: employees, entries, work, money, month-wise trend, top DEOs / verifiers, verification queue, districts, latest registrations / payments, meetings – all from the database |
 | GET  | `/api/v1/admin/operators?role=deo\|verifier&q=` | Admin | **Employees** – DEOs and verifiers with status, location, current work and eligibility |
 | GET  | `/api/v1/admin/operators/:id` | Admin | Full profile (masked), documents, assignments / areas |
 | PATCH | `/api/v1/admin/operators/:id/status` | Admin | `{ status: "active" \| "inactive" \| "rejected", reason }` – reason required to reject (rejecting logs out and blocks login). The employee is notified / e-mailed. New registrations start as **pending**; only **active** employees can be assigned work |
@@ -43,7 +44,7 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | GET  | `/api/v1/notifications` / POST `/notifications/read` | Bearer | In-app notifications (bell) |
 | GET  | `/api/v1/verifier/summary` | Verifier | Total assigned, pending, approved, rejected, income (₹ per verified entry), month-wise |
 | GET  | `/api/v1/verifier/entries?view=pending\|all` / `/verifier/entries/:id` | Verifier | Entries assigned to me (oldest pending first) / one entry with its verification history |
-| POST | `/api/v1/verifier/entries/:id/decision` | Verifier | `{ decision: "approved" \| "rejected", reason }` – reason required to reject; the DEO is notified |
+| POST | `/api/v1/verifier/entries/:id/decision` | Verifier | `{ decision: "approved" \| "rejected", reason, fields? }` – reason required to reject, `fields` = form fields marked wrong; the DEO is notified |
 | GET  | `/api/v1/verifier/history?decision=` | Verifier | My approve / reject history |
 | GET / PATCH | `/api/v1/admin/settings` | Admin | Verifier rate, default DEO rate, payout window, e-mail template |
 | PATCH | `/api/v1/admin/settings/mail-template` | Admin | `{ subject, message }` or `{ reset: true }` – default text of e-mailed files |
@@ -60,6 +61,22 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 **E-mailing files (admin):** any custom addresses – `to` and optional `cc` (comma separated or arrays, max 10 each, validated, duplicates removed). `subject` / `message` are optional: blank = the **default template** saved in Settings (or the built-in one). Placeholders `{report}`, `{details}` (filters / count), `{file}`, `{date}` are filled in when sending; the message is HTML-escaped. DEOs and verifiers can e-mail their own payments **only to their registered e-mail**.
 
 E-mail exports need SMTP; without it they answer `503 MAIL_DISABLED`. Attachments are limited to 15 MB.
+
+**Meetings & requests** (`/api/v1/connect`, every role):
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/connect/contacts` | People I may contact: admin → everyone; DEO → the verifiers of their work + admin; verifier → their DEOs + admin |
+| GET | `/connect/summary` | Upcoming / live meetings and open requests (badge) |
+| GET / POST | `/connect/meetings?view=upcoming\|past\|all` | List / schedule `{ title, link, startsAt, durationMin, notes, participantIds, entryId?, requestId? }`. Link must be **Zoom, Google Meet or Teams** (https). Participants get an in-app notification and an e-mail with the time (IST) and a Join button |
+| POST | `/connect/meetings/:id/cancel` | Organiser or admin; everyone is told |
+| GET / POST | `/connect/requests?box=inbox\|sent` | Requests `{ kind: meeting\|entry\|general, toId, entryId?, subject?, message, preferredAt? }` – notification + e-mail |
+| POST | `/connect/requests/:id/respond` | `{ action: accept\|decline\|close, reply }` (decline needs a reason). A meeting request can also be answered by scheduling a meeting with its `requestId` |
+| PATCH | `/profile/me/meeting-link` | `{ link }` – my personal Zoom / Google Meet room, shown as a Join button on my card |
+
+**User IDs:** `DEO-01-2026`, `VR-01-2026` – number per role, restarting each registration year (IST). Older IDs (e.g. `DEO1006`) were renamed by a migration and still work for login (`user_id_aliases`).
+
+**Money only on final approval:** the DEO earns the work's rate and the verifier the area's rate **only when an entry is approved**; a rejection earns nothing (stored with rate 0). The verifier can mark the wrong fields (`fields: [...]` on reject) – the DEO sees them highlighted.
 
 **Rates are private:** DEOs and verifiers only see their total earnings / income. The per-entry rates (DEO rate per assignment, verifier rate in settings) are set and seen only by the Super Admin – they are never sent to DEO or verifier APIs or e-mails.
 

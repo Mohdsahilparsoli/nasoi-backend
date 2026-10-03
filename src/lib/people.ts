@@ -1,4 +1,5 @@
 import { prisma } from "../db.js";
+import { contactIds, meetingPlatform } from "../modules/connect/service.js";
 
 /** Basic contact card shown between a DEO and the verifier of the same area. */
 export interface PersonCard {
@@ -6,6 +7,9 @@ export interface PersonCard {
   name: string;
   mobile: string | null;
   hasPhoto: boolean;
+  /** Personal Zoom / Google Meet room, if they saved one in their profile. */
+  meetingLink: string | null;
+  platform: string | null;
 }
 
 export async function personCards(ids: (string | null | undefined)[]): Promise<Map<string, PersonCard>> {
@@ -13,25 +17,22 @@ export async function personCards(ids: (string | null | undefined)[]): Promise<M
   if (!unique.length) return new Map();
   const users = await prisma().user.findMany({
     where: { id: { in: unique } },
-    select: { id: true, name: true, mobile: true, documents: { where: { kind: "photo", attachedAt: { not: null } }, select: { id: true }, take: 1 } },
+    select: { id: true, name: true, mobile: true, meetingLink: true, documents: { where: { kind: "photo", attachedAt: { not: null } }, select: { id: true }, take: 1 } },
   });
-  return new Map(users.map((u) => [u.id, { id: u.id, name: u.name, mobile: u.mobile, hasPhoto: u.documents.length > 0 }]));
+  return new Map(
+    users.map((u) => [
+      u.id,
+      { id: u.id, name: u.name, mobile: u.mobile, hasPhoto: u.documents.length > 0, meetingLink: u.meetingLink, platform: u.meetingLink ? meetingPlatform(u.meetingLink) : null },
+    ]),
+  );
 }
 
 /**
- * May `viewer` see `target`'s profile photo? Yes for self and admins, and for a
- * DEO and the verifier who share an assignment (either direction).
+ * May `viewer` see `target`'s profile photo? Yes for self and admins, and for
+ * the people they work with (a DEO and the verifiers of their work / entries,
+ * either direction, and the admin).
  */
 export async function canSeePhoto(viewer: { sub: string; role: string }, target: string) {
   if (viewer.sub === target || viewer.role === "admin") return true;
-  const db = prisma();
-  if (viewer.role === "deo") {
-    return (await db.assignment.count({ where: { deoId: viewer.sub, verifierId: target } })) > 0 ||
-      (await db.entry.count({ where: { deoId: viewer.sub, OR: [{ verifierId: target }, { verifiedById: target }] } })) > 0;
-  }
-  if (viewer.role === "verifier") {
-    return (await db.assignment.count({ where: { verifierId: viewer.sub, deoId: target } })) > 0 ||
-      (await db.entry.count({ where: { deoId: target, OR: [{ verifierId: viewer.sub }, { verifiedById: viewer.sub }] } })) > 0;
-  }
-  return false;
+  return (await contactIds(viewer)).has(target);
 }

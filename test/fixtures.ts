@@ -2,12 +2,12 @@
 import bcrypt from "bcryptjs";
 
 export const FIXTURES = [
-  { id: "DEO126", role: "deo", name: "Rahul Kumar", mobile: "9717323761", email: "rahul.demo@example.com", password: "Abcd@2026" },
-  { id: "DEO127", role: "deo", name: "Priya Sharma", mobile: "9811100022", email: "priya.demo@example.com", password: "Abcd@2026" },
-  { id: "DEO128", role: "deo", name: "Sunil Yadav", mobile: "9811100033", email: "sunil.demo@example.com", password: "Abcd@2026" },
-  { id: "DEO129", role: "deo", name: "Meena Devi", mobile: "9811100044", email: "meena.demo@example.com", password: "Abcd@2026" },
-  { id: "VR102", role: "verifier", name: "Karan Singh", mobile: "9990011224", email: "verifier2.demo@example.com", password: "Abcd@2026" },
-  { id: "VR101", role: "verifier", name: "Anjali Verma", mobile: "9990011223", email: "verifier.demo@example.com", password: "Abcd@2026" },
+  { id: "DEO-01-2026", role: "deo", name: "Rahul Kumar", mobile: "9717323761", email: "rahul.demo@example.com", password: "Abcd@2026" },
+  { id: "DEO-02-2026", role: "deo", name: "Priya Sharma", mobile: "9811100022", email: "priya.demo@example.com", password: "Abcd@2026" },
+  { id: "DEO-03-2026", role: "deo", name: "Sunil Yadav", mobile: "9811100033", email: "sunil.demo@example.com", password: "Abcd@2026" },
+  { id: "DEO-04-2026", role: "deo", name: "Meena Devi", mobile: "9811100044", email: "meena.demo@example.com", password: "Abcd@2026" },
+  { id: "VR-02-2026", role: "verifier", name: "Karan Singh", mobile: "9990011224", email: "verifier2.demo@example.com", password: "Abcd@2026" },
+  { id: "VR-01-2026", role: "verifier", name: "Anjali Verma", mobile: "9990011223", email: "verifier.demo@example.com", password: "Abcd@2026" },
   { id: "ADMIN", role: "admin", name: "Super Admin", mobile: "9000000000", email: "admin.demo@example.com", password: "Admin@2026" },
 ] as const;
 
@@ -16,6 +16,9 @@ export async function ensureFixtures() {
   for (const f of FIXTURES) {
     const passwordHash = await bcrypt.hash(f.password, 10);
     const { password: _p, ...u } = f;
+    // The account may exist under an older ID (renamed by a migration): give it the fixture ID.
+    const byEmail = await prisma().user.findUnique({ where: { email: f.email }, select: { id: true } });
+    if (byEmail && byEmail.id !== f.id) await prisma().user.update({ where: { id: byEmail.id }, data: { id: f.id } });
     await prisma().user.upsert({
       where: { id: f.id },
       create: { ...u, passwordHash },

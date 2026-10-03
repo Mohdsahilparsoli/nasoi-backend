@@ -70,7 +70,8 @@ async function earnings(role: PayRole, userIds?: string[]) {
     const g = await db.entry.groupBy({ by: ["deoId"], where: { status: "approved", ...(userIds ? { deoId: { in: userIds } } : {}) }, _sum: { ratePerEntry: true }, _count: { _all: true } });
     for (const r of g) map.set(r.deoId, { earned: r._sum.ratePerEntry ?? 0, work: r._count._all });
   } else {
-    const g = await db.verification.groupBy({ by: ["verifierId"], where: userIds ? { verifierId: { in: userIds } } : {}, _sum: { rate: true }, _count: { _all: true } });
+    // Only final approvals earn money (and count as work).
+    const g = await db.verification.groupBy({ by: ["verifierId"], where: { decision: "approved", ...(userIds ? { verifierId: { in: userIds } } : {}) }, _sum: { rate: true }, _count: { _all: true } });
     for (const r of g) map.set(r.verifierId, { earned: r._sum.rate ?? 0, work: r._count._all });
   }
   return map;

@@ -15,7 +15,7 @@ let base = "";
 let server: ReturnType<ReturnType<typeof createApp>["listen"]>;
 const H = { "content-type": "application/json", "x-nasoi-client": "web" };
 let admin = "", deo = "", other = "";
-const DEO = "DEO128";
+const DEO = "DEO-03-2026";
 const PIN = String(300000 + Math.floor(Math.random() * 600000));
 const udise = () => String(Math.floor(1e10 + Math.random() * 8.9e10));
 
@@ -32,7 +32,7 @@ before(async () => {
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  [admin, deo, other] = await Promise.all([login("ADMIN", "Admin@2026"), login(DEO, "Abcd@2026"), login("VR101", "Abcd@2026")]);
+  [admin, deo, other] = await Promise.all([login("ADMIN", "Admin@2026"), login(DEO, "Abcd@2026"), login("VR-01-2026", "Abcd@2026")]);
 });
 after(async () => {
   server.close();
@@ -69,7 +69,7 @@ describe("DEO school entries", () => {
 
   test("entry goes into the current assignment with its state, district, PIN and rate", async () => {
     const a = await call(admin, "POST", "/admin/assignments", {
-      deoId: DEO, taskType: "Data Entry Services", recordType: "school", verifierId: "VR101", verifierRate: 2,
+      deoId: DEO, taskType: "Data Entry Services", recordType: "school", verifierId: "VR-01-2026", verifierRate: 2,
       target: 2, ratePerEntry: 12, state: "Uttar Pradesh", district: "Meerut",
       block: "Mawana", village: "Kithore", pincode: PIN, deadline: new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10),
     });
@@ -143,7 +143,7 @@ describe("DEO school entries", () => {
     await prisma().entry.update({ where: { id: entries[1].id }, data: { status: "approved", verifiedAt: new Date() } });
     const r = await call(deo, "PATCH", `/me/entries/${entries[1].id}`, school({ udiseCode: entries[1].code }));
     assert.equal(r.status, 409);
-    const deo2 = await login("DEO127", "Abcd@2026");
+    const deo2 = await login("DEO-02-2026", "Abcd@2026");
     assert.equal((await call(deo2, "GET", `/me/entries/${entries[1].id}`)).status, 404);
   });
 
@@ -172,7 +172,7 @@ describe("DEO school entries", () => {
 
   test("college work uses the college form", async () => {
     const a = await call(admin, "POST", "/admin/assignments", {
-      deoId: DEO, taskType: "Data Entry Services", recordType: "college", verifierId: "VR101", verifierRate: 3,
+      deoId: DEO, taskType: "Data Entry Services", recordType: "college", verifierId: "VR-01-2026", verifierRate: 3,
       target: 2, ratePerEntry: 15, state: "Uttar Pradesh", district: "Meerut", block: "Mawana", village: "Kithore", pincode: PIN,
       deadline: new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10),
     });

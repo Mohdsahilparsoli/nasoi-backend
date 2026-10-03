@@ -39,13 +39,13 @@ const EMAIL = "priya.demo@example.com"; // DEO127
 before(async () => {
   await (await import("./fixtures.js")).ensureFixtures();
   await new Promise<void>((r) => smtp.listen(2587, "127.0.0.1", r));
-  await prisma().user.update({ where: { id: "DEO127" }, data: { passwordHash: await bcrypt.hash("Abcd@2026", 12), status: "active", failedLoginCount: 0, lockedUntil: null } });
+  await prisma().user.update({ where: { id: "DEO-02-2026" }, data: { passwordHash: await bcrypt.hash("Abcd@2026", 12), status: "active", failedLoginCount: 0, lockedUntil: null } });
   server = createApp().listen(0);
   await new Promise((r) => server.once("listening", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 after(async () => {
-  await prisma().user.update({ where: { id: "DEO127" }, data: { passwordHash: await bcrypt.hash("Abcd@2026", 12) } });
+  await prisma().user.update({ where: { id: "DEO-02-2026" }, data: { passwordHash: await bcrypt.hash("Abcd@2026", 12) } });
   server.close();
   smtp.close();
   await prisma().$disconnect();
@@ -87,16 +87,16 @@ describe("forgot / reset password", () => {
   test("bad tokens are refused", async () => {
     assert.equal((await post("/api/v1/auth/reset-password", { token: token.slice(0, -3) + "abc", newPassword: "Fresh2026x" })).status, 400);
     // an access token must not work as a reset token
-    const login = await (await post("/api/v1/auth/login", { loginId: "DEO127", password: "Abcd@2026" })).json();
+    const login = await (await post("/api/v1/auth/login", { loginId: "DEO-02-2026", password: "Abcd@2026" })).json();
     assert.equal((await post("/api/v1/auth/reset-password", { token: login.accessToken, newPassword: "Fresh2026x" })).status, 400);
     assert.equal((await post("/api/v1/auth/reset-password", { token, newPassword: "weak" })).status, 400);
   });
 
   test("reset works once, logs out other sessions", async () => {
-    const before = await (await post("/api/v1/auth/login", { loginId: "DEO127", password: "Abcd@2026" })).json();
+    const before = await (await post("/api/v1/auth/login", { loginId: "DEO-02-2026", password: "Abcd@2026" })).json();
     const r = await post("/api/v1/auth/reset-password", { token, newPassword: "Fresh2026x" });
     assert.equal(r.status, 200, await r.clone().text());
-    assert.equal((await post("/api/v1/auth/login", { loginId: "DEO127", password: "Abcd@2026" }, "10.9.0.2")).status, 401);
+    assert.equal((await post("/api/v1/auth/login", { loginId: "DEO-02-2026", password: "Abcd@2026" }, "10.9.0.2")).status, 401);
     assert.equal((await post("/api/v1/auth/login", { loginId: EMAIL, password: "Fresh2026x" }, "10.9.0.3")).status, 200);
     const me = await fetch(base + "/api/v1/auth/me", { headers: { authorization: `Bearer ${before.accessToken}` } });
     assert.equal(me.status, 401, "old session revoked");

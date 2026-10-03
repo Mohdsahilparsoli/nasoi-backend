@@ -6,6 +6,7 @@ import { changeVerifier, createAssignment, listAssignments, listVerifiers, updat
 import { audit } from "../../lib/audit.js";
 import { getSettings, mailTemplateSchema, settingsSchema, updateMailTemplate, updateSettings } from "../../lib/settings.js";
 import { emailToSchema } from "../../lib/files.js";
+import { adminOverview } from "./overview.js";
 import { adminPayoutsRouter } from "../payments/routes.js";
 import { emailApproved, exportApproved, exportOptions, listAdminEntries, parseFilter } from "./entries.js";
 import { employeeStatusSchema, getEmployee, listEmployees, setEmployeeStatus } from "./operators.js";
@@ -56,6 +57,11 @@ adminRouter.patch("/assignments/:id/verifier", async (req, res) => {
 /** GET /admin/verifiers – verifiers with their active areas and pending entries. */
 adminRouter.get("/verifiers", async (_req, res) => {
   res.json({ verifiers: await listVerifiers() });
+});
+
+/** GET /admin/overview – Super Admin dashboard (all numbers from the database). */
+adminRouter.get("/overview", async (req, res) => {
+  res.json(await adminOverview(req.auth!.sub));
 });
 
 /** Portal settings: verifier rate, default DEO rate, payout window. */

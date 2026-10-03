@@ -22,8 +22,8 @@ export const esc = (s: string) =>
 
 const appUrl = () => config().APP_URL.replace(/\/$/, "");
 
-function button(label: string, href: string) {
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px"><tr><td style="border-radius:8px;background:${C.primary}">
+function button(label: string, href: string, color: string = C.primary) {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px"><tr><td style="border-radius:8px;background:${color}">
 <a href="${esc(href)}" style="display:inline-block;padding:13px 26px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:8px">${esc(label)}</a>
 </td></tr></table>`;
 }
@@ -330,5 +330,100 @@ export function paymentEmail(pay: {
     body: [p(`Dear <b>${esc(pay.name)}</b>,`), p("NASOI has made the following payment to you."), detailsTable(rows), button("View my payments", link)].join("\n"),
   });
   const text = [`Dear ${pay.name},`, "", "NASOI has made the following payment to you.", "", ...rows.map(([k, v]) => `${k.padEnd(16)}: ${v}`), "", `View my payments: ${link}`].join("\n");
+  return { subject, html, text };
+}
+
+/* ---------- Meetings and requests ---------- */
+
+export const PLATFORM_LABEL: Record<string, string> = { zoom: "Zoom", google_meet: "Google Meet", teams: "Microsoft Teams", other: "Online meeting" };
+const PLATFORM_COLOR: Record<string, string> = { zoom: "#0b5cff", google_meet: "#00897b", teams: "#5b5fc7", other: C.primary };
+
+/** "Sat, 04 Oct 2026, 11:30 am IST" */
+export function istDateTime(d: Date) {
+  return `${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(d)} IST`;
+}
+
+/** Meeting invitation (or cancellation) for one participant. */
+export function meetingEmail(m: {
+  name: string; id: string; title: string; platform: string; link: string; startsAt: Date; durationMin: number;
+  organizer: string; notes: string | null; entryId: string | null; cancelled?: boolean; role: string;
+}) {
+  const label = PLATFORM_LABEL[m.platform] ?? PLATFORM_LABEL.other!;
+  const when = istDateTime(m.startsAt);
+  const rows: [string, string][] = [
+    ["Meeting", m.title],
+    ["Date & time", when],
+    ["Duration", `${m.durationMin} minutes`],
+    ["Platform", label],
+    ["Organised by", m.organizer],
+  ];
+  if (m.entryId) rows.push(["About entry", m.entryId]);
+  if (m.notes) rows.push(["Notes", m.notes]);
+  rows.push(["Meeting ID", m.id]);
+  const page = `${appUrl()}/${m.role === "admin" ? "admin" : m.role === "verifier" ? "verifier" : "deo"}/connect`;
+  const subject = m.cancelled ? `Cancelled: ${m.title} – ${when}` : `${label} meeting: ${m.title} – ${when}`;
+  const intro = m.cancelled ? "The following meeting has been cancelled." : `You are invited to a <b>${esc(label)}</b> meeting.`;
+  const html = layoutEmail({
+    preheader: `${m.cancelled ? "Cancelled" : label} · ${when}`,
+    title: m.cancelled ? "Meeting cancelled" : "Meeting invitation",
+    body: [
+      p(`Dear <b>${esc(m.name)}</b>,`),
+      p(intro),
+      detailsTable(rows),
+      m.cancelled ? "" : button(`Join ${label}`, m.link, PLATFORM_COLOR[m.platform] ?? C.primary),
+      m.cancelled ? "" : p(`<span style="font-size:13px;color:${C.muted}">Link: <a href="${esc(m.link)}">${esc(m.link)}</a></span>`),
+      p(`<a href="${esc(page)}">See all my meetings</a>`),
+    ].join("\n"),
+  });
+  const text = [
+    `Dear ${m.name},`,
+    "",
+    m.cancelled ? "The following meeting has been cancelled." : `You are invited to a ${label} meeting.`,
+    "",
+    ...rows.map(([k, v]) => `${k.padEnd(14)}: ${v}`),
+    ...(m.cancelled ? [] : ["", `Join ${label}: ${m.link}`]),
+    "",
+    `My meetings: ${page}`,
+  ].join("\n");
+  return { subject, html, text };
+}
+
+const KIND_LABEL: Record<string, string> = { meeting: "Meeting request", entry: "Entry request", general: "Request" };
+
+/** A new request, or the answer to one. */
+export function requestEmail(r: {
+  name: string; id: string; kind: string; from: string; subject: string; message: string; entryId: string | null;
+  preferredAt: Date | null; role: string; reply?: { status: string; text: string | null };
+}) {
+  const page = `${appUrl()}/${r.role === "admin" ? "admin" : r.role === "verifier" ? "verifier" : "deo"}/connect?tab=requests`;
+  const kind = KIND_LABEL[r.kind] ?? "Request";
+  const rows: [string, string][] = [["Request", `${kind} (${r.id})`], [r.reply ? "Answered by" : "From", r.from], ["Subject", r.subject]];
+  if (r.entryId) rows.push(["Entry", r.entryId]);
+  if (r.preferredAt) rows.push(["Preferred time", istDateTime(r.preferredAt)]);
+  if (r.reply) rows.push(["Status", r.reply.status.charAt(0).toUpperCase() + r.reply.status.slice(1)]);
+  const subject = r.reply ? `Your request ${r.id} was ${r.reply.status} – ${r.subject}` : `${kind} from ${r.from}: ${r.subject}`;
+  const quote = (t: string) => `<div style="border-left:3px solid ${C.saffron};background:${C.soft};padding:10px 14px;margin:0 0 16px;white-space:pre-wrap">${esc(t)}</div>`;
+  const html = layoutEmail({
+    preheader: r.reply ? `${r.from} ${r.reply.status} your request.` : `${r.from}: ${r.subject}`,
+    title: r.reply ? "Request answered" : kind,
+    body: [
+      p(`Dear <b>${esc(r.name)}</b>,`),
+      p(r.reply ? `${esc(r.from)} has <b>${esc(r.reply.status)}</b> your request.` : `${esc(r.from)} has sent you a request on the NASOI portal.`),
+      detailsTable(rows),
+      r.reply ? (r.reply.text ? quote(r.reply.text) : "") : quote(r.message),
+      button(r.reply ? "Open my requests" : "Reply on the portal", page),
+    ].join("\n"),
+  });
+  const text = [
+    `Dear ${r.name},`,
+    "",
+    r.reply ? `${r.from} has ${r.reply.status} your request.` : `${r.from} has sent you a request on the NASOI portal.`,
+    "",
+    ...rows.map(([k, v]) => `${k.padEnd(14)}: ${v}`),
+    "",
+    r.reply ? (r.reply.text ?? "") : r.message,
+    "",
+    `Open: ${page}`,
+  ].join("\n");
   return { subject, html, text };
 }

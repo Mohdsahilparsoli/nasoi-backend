@@ -8,12 +8,15 @@ import { notify } from "../../lib/notify.js";
 import { getSettings } from "../../lib/settings.js";
 import { personCards } from "../../lib/people.js";
 import { withProgress } from "../assignments/service.js";
-import { toPublicEntry } from "../entries/service.js";
+import { FORMS } from "../entries/forms.js";
+import { asRecordType, toPublicEntry } from "../entries/service.js";
 
 export const decisionSchema = z
   .object({
     decision: z.enum(["approved", "rejected"], { error: "Choose approve or reject" }),
-    reason: z.string().trim().max(300, "Reason is too long (max 300 characters)").optional(),
+    reason: z.string().trim().max(3000, "Reason is too long (max 3000 characters)").optional(),
+    /** Form field keys the verifier marked wrong (one by one or all). */
+    fields: z.array(z.string().max(60)).max(100).optional(),
   })
   .superRefine((v, ctx) => {
     if (v.decision === "rejected" && (v.reason ?? "").length < 5) {
@@ -32,7 +35,7 @@ async function toVerifierEntries(rows: EntryWithContext[]) {
   const cards = await personCards(rows.map((e) => e.deoId));
   return rows.map((e) => ({
     ...toPublicEntry(e),
-    deo: cards.get(e.deoId) ?? { id: e.deoId, name: e.deoId, mobile: null, hasPhoto: false },
+    deo: cards.get(e.deoId) ?? { id: e.deoId, name: e.deoId, mobile: null, hasPhoto: false, meetingLink: null, platform: null },
     assignment: e.assignment,
     verifierId: e.verifierId,
     assignedAt: e.assignedAt,
@@ -101,7 +104,7 @@ export async function verifierEntry(verifierId: string, id: string) {
   const e = await prisma().entry.findUnique({ where: { id }, include: withContext });
   const decidedByMe = e && (await prisma().verification.count({ where: { entryId: id, verifierId } })) > 0;
   if (!e || (e.verifierId !== verifierId && !decidedByMe)) throw new HttpError(404, "Entry not found.", "NOT_FOUND");
-  const history = await prisma().verification.findMany({ where: { entryId: id }, orderBy: { createdAt: "asc" }, select: { decision: true, reason: true, createdAt: true, verifierId: true } });
+  const history = await prisma().verification.findMany({ where: { entryId: id }, orderBy: { createdAt: "asc" }, select: { decision: true, reason: true, fields: true, createdAt: true, verifierId: true } });
   const [entry] = await toVerifierEntries([e]);
   return { ...entry, history };
 }
@@ -109,12 +112,17 @@ export async function verifierEntry(verifierId: string, id: string) {
 /** Approve or reject a pending entry assigned to this verifier. */
 export async function decide(req: Request, verifierId: string, id: string, v: z.infer<typeof decisionSchema>) {
   const reason = v.decision === "rejected" ? v.reason! : null;
+  // Only real fields of this entry's form are kept (in form order).
+  const current = await prisma().entry.findUnique({ where: { id }, select: { recordType: true } });
+  const formKeys = FORMS[asRecordType(current?.recordType ?? "school")].fields.map((f) => f.key);
+  const marked = v.decision === "rejected" ? formKeys.filter((k) => v.fields?.includes(k)) : [];
+  const fields = marked.length ? marked : Prisma.DbNull;
   const entry = await prisma().$transaction(async (tx) => {
     const now = new Date();
     // Only one decision can win, even if the verifier double-clicks or two tabs are open.
     const r = await tx.entry.updateMany({
       where: { id, verifierId, status: "pending" },
-      data: { status: v.decision, rejectReason: reason, verifiedById: verifierId, verifiedAt: now },
+      data: { status: v.decision, rejectReason: reason, rejectFields: fields, verifiedById: verifierId, verifiedAt: now },
     });
     if (r.count !== 1) {
       const e = await tx.entry.findUnique({ where: { id }, select: { verifierId: true, status: true } });
@@ -122,9 +130,10 @@ export async function decide(req: Request, verifierId: string, id: string, v: z.
       throw new HttpError(409, `This entry is already ${e.status}.`, "ALREADY_VERIFIED");
     }
     const e = await tx.entry.findUniqueOrThrow({ where: { id }, include: { deo: { select: { id: true, email: true } }, assignment: { select: { verifierRate: true } } } });
-    // Amount for the verifier: set by the admin on the work (area); falls back to the default in Settings.
-    const rate = e.assignment.verifierRate ?? (await getSettings()).verifierRate;
-    await tx.verification.create({ data: { entryId: id, verifierId, deoId: e.deoId, decision: v.decision, reason, rate } });
+    // Money is earned only when the entry is finally APPROVED: the verifier gets the area's rate
+    // (default in Settings) and the DEO gets the work's rate. A rejection earns nothing.
+    const rate = v.decision === "approved" ? (e.assignment.verifierRate ?? (await getSettings()).verifierRate) : 0;
+    await tx.verification.create({ data: { entryId: id, verifierId, deoId: e.deoId, decision: v.decision, reason, fields, rate } });
     return e;
   });
 
@@ -133,7 +142,7 @@ export async function decide(req: Request, verifierId: string, id: string, v: z.
     // In-app only: a rejection needs action, but an e-mail for every entry would be too much.
     await notify(entry.deo, {
       title: "Entry rejected – please correct",
-      body: `${id} (${entry.recordName}) was rejected: ${reason}`,
+      body: `${id} (${entry.recordName}) was rejected: ${(reason ?? "").slice(0, 300)}`,
       link: `/deo/entries/${id}`,
     });
   }
@@ -175,7 +184,7 @@ export async function verifierAreas(verifierId: string) {
     area: { state: a.state, district: a.district, block: a.block, village: a.village, pincode: a.pincode },
     deadline: a.deadline.toISOString().slice(0, 10),
     status: a.status,
-    deo: cards.get(a.deoId) ?? { id: a.deoId, name: a.deoId, mobile: null, hasPhoto: false },
+    deo: cards.get(a.deoId) ?? { id: a.deoId, name: a.deoId, mobile: null, hasPhoto: false, meetingLink: null, platform: null },
     progress: withP[i].progress,
   }));
 }

@@ -84,7 +84,7 @@ test("registration sends a professional confirmation e-mail (no password, no Aad
   assert.equal(res.status, 201, await res.clone().text());
   const j = await res.json();
   assert.equal(j.emailSent, true);
-  assert.match(j.user.id, /^VR\d+$/);
+  assert.match(j.user.id, /^VR-\d{2,}-20\d{2}$/);
   assert.equal(j.user.createdAt, undefined);
 
   await new Promise((r2) => setTimeout(r2, 300));
