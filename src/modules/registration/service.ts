@@ -76,6 +76,8 @@ export async function register(req: Request, v: RegistrationInput) {
           mobile: v.mobile,
           email: v.email,
           passwordHash,
+          // New employees wait for the admin to activate them before they get work.
+          status: "pending",
           profile: {
             create: {
               fatherName: v.fatherName,

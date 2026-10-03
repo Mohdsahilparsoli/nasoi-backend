@@ -28,7 +28,12 @@ export type AuditAction =
   | "settings.updated"
   | "entries.exported"
   | "assignment.verifier_changed"
-  | "profile.photo_changed";
+  | "profile.photo_changed"
+  | "user.activated"
+  | "user.deactivated"
+  | "user.rejected"
+  | "payment.recorded"
+  | "file.emailed";
 
 /** Append-only security log. Never stores passwords or tokens. */
 export async function audit(req: Request, action: AuditAction, userId: string | null, meta: Record<string, string | number | boolean> = {}) {

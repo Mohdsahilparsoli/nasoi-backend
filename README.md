@@ -25,9 +25,9 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | PATCH | `/api/v1/profile/me/contact` | Bearer | Mobile, alternate mobile, email, address |
 | PATCH | `/api/v1/profile/me/bank` | Bearer | Bank details |
 | GET  | `/api/v1/documents/:id` | Bearer | View a document (owner, verifier or admin) |
-| GET  | `/api/v1/admin/operators?q=` | Admin | All DEOs with location, current work and eligibility |
-| GET  | `/api/v1/admin/operators/:id` | Admin | Full profile (masked), documents, assignments |
-| PATCH | `/api/v1/admin/operators/:id/status` | Admin | `{ status: "active" \| "blocked" }` (blocking logs the DEO out) |
+| GET  | `/api/v1/admin/operators?role=deo\|verifier&q=` | Admin | **Employees** – DEOs and verifiers with status, location, current work and eligibility |
+| GET  | `/api/v1/admin/operators/:id` | Admin | Full profile (masked), documents, assignments / areas |
+| PATCH | `/api/v1/admin/operators/:id/status` | Admin | `{ status: "active" \| "inactive" \| "rejected", reason }` – reason required to reject (rejecting logs out and blocks login). The employee is notified / e-mailed. New registrations start as **pending**; only **active** employees can be assigned work |
 | GET / POST | `/api/v1/admin/assignments` | Admin | List / assign work: DEO, **verifier of the area**, **school or college**, DEO amount and verifier amount. Rules: one active assignment per DEO and per PIN code; ID `ASG-<PIN>-001` |
 | PATCH | `/api/v1/admin/assignments/:id/verifier` | Admin | Change the verifier of an area (pending entries move) |
 | GET  | `/api/v1/admin/verifiers` | Admin | Verifiers with active areas and pending entries |
@@ -49,6 +49,14 @@ Modules done: **Login / Auth**, **Registration** (DEO & Verifier, with documents
 | GET  | `/api/v1/admin/entries?status=&pincode=&deoId=&verifierId=&assignmentId=&taskType=&state=&district=&from=&to=&q=` | Admin | All entries (with rates) |
 | GET  | `/api/v1/admin/entries/export-options` | Admin | PIN codes, DEOs, verifiers, assignments, districts, services that have approved entries |
 | GET  | `/api/v1/admin/entries/export?format=xlsx\|csv&<same filters>` | Admin | Download **approved** entries as Excel or CSV. No filter = export all. `from`/`to` = approved between (IST) |
+| POST | `/api/v1/admin/entries/export/email` | Admin | `{ to, format, filters }` – same file sent as an e-mail attachment |
+| GET  | `/api/v1/admin/payouts?role=deo\|verifier` | Admin | Every employee's earned / paid / balance from the database (+ masked bank) |
+| GET  | `/api/v1/admin/payouts/export?role=` / POST `/admin/payouts/export/email` | Admin | Separate DEO and verifier Excel (payouts + receipts), download or e-mail |
+| GET / POST | `/api/v1/admin/payments` | Admin | Receipts list / **Add Receipt**: `{ userId, amount, transactionId (unique), payeeName, mode, paidOn, entriesCount, periodFrom, periodTo, notes }` – the employee is notified and e-mailed |
+| GET  | `/api/v1/payments/me` | DEO / Verifier | My payments (all receipt details), earned / paid / balance |
+| GET  | `/api/v1/payments/me/export` / POST `/payments/me/export/email` | DEO / Verifier | My payments as Excel – download or e-mail to **my own** e-mail |
+
+E-mail exports need SMTP; without it they answer `503 MAIL_DISABLED`. Attachments are limited to 15 MB.
 
 **Rates are private:** DEOs and verifiers only see their total earnings / income. The per-entry rates (DEO rate per assignment, verifier rate in settings) are set and seen only by the Super Admin – they are never sent to DEO or verifier APIs or e-mails.
 

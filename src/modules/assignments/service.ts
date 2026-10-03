@@ -20,6 +20,10 @@ export async function withProgress<T extends { id: string }>(list: T[]): Promise
 
 type Person = { id: string; name: string; mobile: string | null };
 
+/** "Village, Block, District" – village and block are optional now. */
+export const placeText = (a: { village?: string | null; block?: string | null; district: string }) =>
+  [a.village, a.block, a.district].filter((x) => x && x.trim()).join(", ");
+
 /** Full shape for the admin (includes both amounts). DEO responses strip the amounts. */
 export function toPublicAssignment(a: Assignment & { deo?: Person; verifier?: Person | null }) {
   return {
@@ -58,7 +62,7 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
 
       const deo = await tx.user.findUnique({ where: { id: v.deoId }, select: { id: true, role: true, status: true, name: true, email: true } });
       if (!deo || deo.role !== "deo") throw new HttpError(404, "Data Entry Operator not found.", "DEO_NOT_FOUND");
-      if (deo.status !== "active") throw new HttpError(409, `${deo.id} is blocked. Unblock the operator before assigning work.`, "DEO_BLOCKED");
+      if (deo.status !== "active") throw fieldError(409, "DEO_NOT_ACTIVE", "deoId", `${deo.id} is ${deo.status}. Only active employees can be assigned work – activate the operator first.`);
 
       const busy = await tx.assignment.findFirst({ where: { deoId: deo.id, status: "active" }, select: { id: true, pincode: true } });
       if (busy) {
@@ -70,7 +74,7 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
       }
       const vr = await tx.user.findUnique({ where: { id: v.verifierId }, select: { id: true, role: true, status: true, name: true, email: true } });
       if (!vr || vr.role !== "verifier") throw fieldError(404, "VERIFIER_NOT_FOUND", "verifierId", "Verifier not found.");
-      if (vr.status !== "active") throw fieldError(409, "VERIFIER_BLOCKED", "verifierId", `${vr.id} is blocked. Choose an active verifier.`);
+      if (vr.status !== "active") throw fieldError(409, "VERIFIER_NOT_ACTIVE", "verifierId", `${vr.id} is ${vr.status}. Choose an active verifier.`);
 
       const pinTaken = await tx.assignment.findFirst({ where: { pincode: v.pincode, status: "active" }, select: { id: true, deoId: true } });
       if (pinTaken) {
@@ -116,7 +120,7 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
     deo,
     {
       title: "New work assigned",
-      body: `${what} entries (${a.taskType}) for PIN ${a.pincode} (${a.village}, ${a.district}). Target ${a.target} entries, deadline ${a.deadline.toISOString().slice(0, 10)}. Verifier: ${vr.name} (${vr.id}).`,
+      body: `${what} entries (${a.taskType}) for PIN ${a.pincode} (${placeText(a)}). Target ${a.target} entries, deadline ${a.deadline.toISOString().slice(0, 10)}. Verifier: ${vr.name} (${vr.id}).`,
       link: "/deo/work",
     },
     assignmentEmail({ ...a, deoName: deo.name, verifierName: vr.name, verifierId: vr.id }),
@@ -126,7 +130,7 @@ export async function createAssignment(req: Request, adminId: string, v: CreateA
     vr,
     {
       title: "New area to verify",
-      body: `${a.id}: ${what.toLowerCase()} entries for PIN ${a.pincode} (${a.village}, ${a.district}) by ${deo.name} (${deo.id}).`,
+      body: `${a.id}: ${what.toLowerCase()} entries for PIN ${a.pincode} (${placeText(a)}) by ${deo.name} (${deo.id}).`,
       link: "/verifier",
     },
     verifierAreaEmail({ ...a, verifierName: vr.name, deoName: deo.name, deoId: deo.id }),
@@ -217,13 +221,13 @@ export async function changeVerifier(req: Request, adminId: string, id: string, 
   if (a.status !== "active") throw new HttpError(409, `This assignment is already ${a.status}.`, "NOT_ACTIVE");
   const vr = await db.user.findUnique({ where: { id: verifierId }, select: { id: true, role: true, status: true, name: true, email: true } });
   if (!vr || vr.role !== "verifier") throw fieldError(404, "VERIFIER_NOT_FOUND", "verifierId", "Verifier not found.");
-  if (vr.status !== "active") throw fieldError(409, "VERIFIER_BLOCKED", "verifierId", `${vr.id} is blocked. Choose an active verifier.`);
+  if (vr.status !== "active") throw fieldError(409, "VERIFIER_NOT_ACTIVE", "verifierId", `${vr.id} is ${vr.status}. Choose an active verifier.`);
   const [updated, moved] = await db.$transaction([
     db.assignment.update({ where: { id }, data: { verifierId: vr.id }, include: { deo: { select: { id: true, name: true, mobile: true } }, verifier: { select: { id: true, name: true, mobile: true } } } }),
     db.entry.updateMany({ where: { assignmentId: id, status: "pending" }, data: { verifierId: vr.id, assignedAt: new Date() } }),
   ]);
   await audit(req, "assignment.verifier_changed", adminId, { assignmentId: id, verifierId: vr.id, movedEntries: moved.count });
-  await notify(vr, { title: "New area to verify", body: `${id}: entries for PIN ${a.pincode} (${a.village}, ${a.district}) by ${a.deo.name} (${a.deo.id}).`, link: "/verifier" });
+  await notify(vr, { title: "New area to verify", body: `${id}: entries for PIN ${a.pincode} (${placeText(a)}) by ${a.deo.name} (${a.deo.id}).`, link: "/verifier" });
   await notify(a.deo, { title: "Verifier changed", body: `Your work ${id} will now be verified by ${vr.name} (${vr.id}).`, link: "/deo/work" });
   return { assignment: toPublicAssignment(updated), movedEntries: moved.count };
 }

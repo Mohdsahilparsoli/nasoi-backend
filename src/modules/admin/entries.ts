@@ -1,9 +1,11 @@
 import type { Request, Response } from "express";
 import ExcelJS from "exceljs";
+import type { Writable } from "node:stream";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { audit } from "../../lib/audit.js";
+import { CSV_TYPE, XLSX_TYPE, emailFile, toBuffer } from "../../lib/files.js";
 import { FORMS, RECORD_LABEL, type FieldDef, type RecordType } from "../entries/forms.js";
 
 /* ------------------------------------------------------------------ */
@@ -220,27 +222,22 @@ function fileName(f: EntryFilter, ext: string) {
   return `${parts.join("_")}.${ext}`;
 }
 
-export async function exportApproved(req: Request, res: Response, adminId: string, f: EntryFilter, format: "csv" | "xlsx") {
+/** Writes the approved entries (CSV or Excel) to any stream; returns how many rows were written. */
+async function writeApproved(out: Writable, f: EntryFilter, format: "csv" | "xlsx") {
   const where = buildWhere({ ...f, status: "approved" }, "verifiedAt");
   const types: RecordType[] = f.recordType ? [f.recordType] : ["school", "college"];
-  const name = fileName(f, format);
-  res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
-  res.setHeader("Cache-Control", "no-store");
   let count = 0;
-
   if (format === "csv") {
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
     // BOM so Excel opens Hindi / special characters correctly.
     // One CSV: the chosen type's columns, or all fields of both types when exporting everything.
     const cols = columnsFor(types);
-    res.write("\uFEFF" + ["S.No", ...cols.map((c) => c.header)].map(csvCell).join(",") + "\r\n");
+    out.write("\uFEFF" + ["S.No", ...cols.map((c) => c.header)].map(csvCell).join(",") + "\r\n");
     for await (const rows of approvedBatches(where)) {
-      res.write(rows.map((e) => [++count, ...cols.map((c) => c.get(e))].map(csvCell).join(",")).join("\r\n") + "\r\n");
+      out.write(rows.map((e) => [++count, ...cols.map((c) => c.get(e))].map(csvCell).join(",")).join("\r\n") + "\r\n");
     }
-    res.end();
+    out.end();
   } else {
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
+    const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: out, useStyles: true });
     wb.creator = "NASOI";
     // Excel: one sheet per record type (Schools / Colleges), each with its own columns.
     for (const t of types) {
@@ -263,5 +260,30 @@ export async function exportApproved(req: Request, res: Response, adminId: strin
     }
     await wb.commit();
   }
-  await audit(req, "entries.exported", adminId, { format, count, ...Object.fromEntries(Object.entries(f).filter(([, v]) => v).map(([k, v]) => [k, String(v)])) });
+  return count;
+}
+
+const filterMeta = (f: EntryFilter) => Object.fromEntries(Object.entries(f).filter(([, v]) => v).map(([k, v]) => [k, String(v)]));
+
+/** GET /admin/entries/export – download. */
+export async function exportApproved(req: Request, res: Response, adminId: string, f: EntryFilter, format: "csv" | "xlsx") {
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName(f, format)}"`);
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Type", format === "csv" ? CSV_TYPE : XLSX_TYPE);
+  const count = await writeApproved(res, f, format);
+  await audit(req, "entries.exported", adminId, { format, count, ...filterMeta(f) });
+}
+
+/** POST /admin/entries/export/email – the same file, sent as an e-mail attachment. */
+export async function emailApproved(req: Request, adminId: string, f: EntryFilter, format: "csv" | "xlsx", to: string) {
+  let count = 0;
+  const content = await toBuffer(async (out) => (count = await writeApproved(out, f, format)));
+  const filename = fileName(f, format);
+  const r = await emailFile(req, adminId, to, { filename, content, contentType: format === "csv" ? CSV_TYPE : XLSX_TYPE }, {
+    subject: `NASOI approved entries – ${filename}`,
+    title: "Approved entries export",
+    intro: `Attached: ${count} approved entr${count === 1 ? "y" : "ies"} from the NASOI portal.`,
+  });
+  await audit(req, "entries.exported", adminId, { format, count, emailedTo: to, ...filterMeta(f) });
+  return { ...r, count };
 }

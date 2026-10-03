@@ -25,8 +25,14 @@ function mailer(): Transporter {
   return transport;
 }
 
-export async function sendMail(msg: { to: string; subject: string; text: string; html: string }) {
+export interface MailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
+export async function sendMail(msg: { to: string; subject: string; text: string; html: string; attachments?: MailAttachment[] }) {
   await mailer().sendMail({ from: config().SMTP_FROM, ...msg });
 }
 
-export { assignmentEmail, registrationEmail, resetPasswordEmail, verifierAreaEmail } from "./email-templates.js";
+export { accountStatusEmail, assignmentEmail, paymentEmail, registrationEmail, resetPasswordEmail, verifierAreaEmail } from "./email-templates.js";

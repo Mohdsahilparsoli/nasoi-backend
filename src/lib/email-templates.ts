@@ -41,7 +41,7 @@ function detailsTable(rows: [string, string][]) {
 }
 
 /** Shared frame: tricolour bar, logo + name, content, footer. */
-function layout(opts: { preheader: string; title: string; body: string }) {
+export function layoutEmail(opts: { preheader: string; title: string; body: string }) {
   const logo = `${appUrl()}/brand/logo.png`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(opts.title)}</title></head>
@@ -96,10 +96,10 @@ export function registrationEmail(u: { id: string; name: string; role: "deo" | "
   const role = ROLE_LABEL[u.role];
   const next =
     u.role === "deo"
-      ? "The NASOI admin will review your details and assign your school / area work. You will see it on your dashboard under “My Work”."
-      : "The NASOI admin will review your details and assign records for verification. You will see them on your dashboard.";
+      ? "Your account is waiting for approval. The NASOI admin will review your details, activate your account and then assign your area work. You can log in any time to see the status."
+      : "Your account is waiting for approval. The NASOI admin will review your details, activate your account and then assign areas for verification. You can log in any time to see the status.";
   const subject = `Registration successful – your NASOI ID is ${u.id}`;
-  const html = layout({
+  const html = layoutEmail({
     preheader: `Welcome to NASOI. Your Registration ID is ${u.id}.`,
     title: "Registration successful",
     body: [
@@ -148,7 +148,7 @@ export function registrationEmail(u: { id: string; name: string; role: "deo" | "
 /** Password reset link. */
 export function resetPasswordEmail(name: string, link: string, minutes: number) {
   const subject = "Reset your NASOI password";
-  const html = layout({
+  const html = layoutEmail({
     preheader: `Use this link within ${minutes} minutes to set a new password.`,
     title: "Reset your password",
     body: [
@@ -181,9 +181,9 @@ export function assignmentEmail(a: {
 }) {
   const link = `${appUrl()}/deo/work`;
   const deadline = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(a.deadline);
-  const area = `${a.village}, ${a.block}, ${a.district}, ${a.state} – ${a.pincode}`;
+  const area = `${[a.village, a.block, a.district, a.state].filter((x) => x && x.trim()).join(", ")} – ${a.pincode}`;
   const subject = `New work assigned – ${a.id} (PIN ${a.pincode})`;
-  const html = layout({
+  const html = layoutEmail({
     preheader: `${a.taskType} for PIN ${a.pincode}, target ${a.target} entries, deadline ${deadline}.`,
     title: "New work assigned to you",
     body: [
@@ -231,10 +231,10 @@ export function verifierAreaEmail(a: {
 }) {
   const link = `${appUrl()}/verifier`;
   const deadline = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" }).format(a.deadline);
-  const area = `${a.village}, ${a.block}, ${a.district}, ${a.state} – ${a.pincode}`;
+  const area = `${[a.village, a.block, a.district, a.state].filter((x) => x && x.trim()).join(", ")} – ${a.pincode}`;
   const what = a.recordType === "college" ? "College" : "School";
   const subject = `New area to verify – ${a.id} (PIN ${a.pincode})`;
-  const html = layout({
+  const html = layoutEmail({
     preheader: `${what} entries for PIN ${a.pincode} by ${a.deoName} will come to you for verification.`,
     title: "New area assigned for verification",
     body: [
@@ -271,5 +271,64 @@ export function verifierAreaEmail(a: {
     "",
     "This is an automated e-mail – please do not reply.",
   ].join("\n");
+  return { subject, html, text };
+}
+
+/** Account activated or registration rejected by the admin. */
+export function accountStatusEmail(u: { name: string; id: string; role: "deo" | "verifier"; status: "active" | "rejected"; reason?: string }) {
+  const active = u.status === "active";
+  const login = `${appUrl()}/login?id=${encodeURIComponent(u.id)}`;
+  const subject = active ? `Your NASOI account ${u.id} is active` : `NASOI registration ${u.id} – not approved`;
+  const html = layoutEmail({
+    preheader: active ? "Your account has been activated. You can now be assigned work." : "Your registration was not approved.",
+    title: active ? "Your account is active" : "Registration not approved",
+    body: [
+      p(`Dear <b>${esc(u.name)}</b>,`),
+      active
+        ? p(`Your account as a <b>${esc(ROLE_LABEL[u.role])}</b> (ID <b>${esc(u.id)}</b>) has been activated by the NASOI admin. You will be notified when work is assigned to you.`)
+        : p(`We are sorry – your registration (ID <b>${esc(u.id)}</b>) was not approved by the NASOI admin.`),
+      !active && u.reason ? detailsTable([["Reason", u.reason]]) : "",
+      active ? button("Login to your account", login) : small("If you think this is a mistake, please contact the NASOI office."),
+    ].join("\n"),
+  });
+  const text = [
+    `Dear ${u.name},`,
+    "",
+    active
+      ? `Your account as a ${ROLE_LABEL[u.role]} (ID ${u.id}) has been activated by the NASOI admin. You will be notified when work is assigned to you.`
+      : `Your registration (ID ${u.id}) was not approved by the NASOI admin.${u.reason ? ` Reason: ${u.reason}` : ""}`,
+    "",
+    active ? `Login: ${login}` : "If you think this is a mistake, please contact the NASOI office.",
+    "",
+    "This is an automated e-mail – please do not reply.",
+  ].join("\n");
+  return { subject, html, text };
+}
+
+/** Payment receipt sent to a DEO / verifier when the admin records a payout. */
+export function paymentEmail(pay: {
+  name: string; id: string; amount: number; paidOn: string; mode: string; transactionId: string; payeeName: string;
+  entriesCount: number | null; periodFrom: string | null; periodTo: string | null; notes: string | null; role: "deo" | "verifier";
+}) {
+  const amount = `₹${pay.amount.toLocaleString("en-IN")}`;
+  const link = `${appUrl()}/${pay.role === "verifier" ? "verifier" : "deo"}/payments`;
+  const rows: [string, string][] = [
+    ["Payment ID", pay.id],
+    ["Amount", amount],
+    ["Paid on", pay.paidOn],
+    ["Mode", pay.mode],
+    ["Transaction ID", pay.transactionId],
+    ["Paid to", pay.payeeName],
+  ];
+  if (pay.entriesCount !== null) rows.push(["Entries covered", String(pay.entriesCount)]);
+  if (pay.periodFrom || pay.periodTo) rows.push(["Period", `${pay.periodFrom ?? "…"} to ${pay.periodTo ?? "…"}`]);
+  if (pay.notes) rows.push(["Notes", pay.notes]);
+  const subject = `Payment received – ${amount} (${pay.id})`;
+  const html = layoutEmail({
+    preheader: `${amount} paid on ${pay.paidOn}, transaction ${pay.transactionId}.`,
+    title: "Payment received",
+    body: [p(`Dear <b>${esc(pay.name)}</b>,`), p("NASOI has made the following payment to you."), detailsTable(rows), button("View my payments", link)].join("\n"),
+  });
+  const text = [`Dear ${pay.name},`, "", "NASOI has made the following payment to you.", "", ...rows.map(([k, v]) => `${k.padEnd(16)}: ${v}`), "", `View my payments: ${link}`].join("\n");
   return { subject, html, text };
 }

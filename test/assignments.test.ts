@@ -79,7 +79,8 @@ describe("admin: operators and assignments", () => {
     assert.ok(d, "DEO126 listed");
     assert.equal(d.eligible, true);
     assert.equal(d.currentAssignment, null);
-    assert.ok(!operators.some((o: { id: string }) => o.id === "VR101" || o.id === "ADMIN"), "only DEOs");
+    assert.ok(operators.some((o: { id: string }) => o.id === "VR101"), "verifiers are employees too");
+    assert.ok(!operators.some((o: { id: string }) => o.id === "ADMIN"), "the admin is not an employee");
     const s = await (await call(admin, "GET", "/admin/operators?q=priya")).json();
     assert.deepEqual(s.operators.map((o: { id: string }) => o.id), ["DEO127"]);
   });
@@ -165,20 +166,42 @@ describe("admin: operators and assignments", () => {
     assert.equal(all.assignments.length, 2);
   });
 
-  test("operator detail, block / unblock", async () => {
+  test("employee detail; inactive / rejected / active", async () => {
     const d = await (await call(admin, "GET", "/admin/operators/deo126")).json();
     assert.equal(d.operator.id, "DEO126");
+    assert.equal(d.operator.role, "deo");
     assert.equal(d.operator.assignments.length, 2);
-    assert.equal((await call(admin, "GET", "/admin/operators/VR101")).status, 404);
+    const v = await (await call(admin, "GET", "/admin/operators/VR101")).json();
+    assert.equal(v.operator.role, "verifier", "verifiers are employees too");
+    const list = await (await call(admin, "GET", "/admin/operators")).json();
+    assert.ok(list.operators.some((o: { id: string }) => o.id === "VR101") && list.operators.some((o: { id: string }) => o.id === "DEO126"));
+    const deosOnly = await (await call(admin, "GET", "/admin/operators?role=deo")).json();
+    assert.ok(deosOnly.operators.every((o: { role: string }) => o.role === "deo"));
 
-    const b = await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "blocked" });
-    assert.equal(b.status, 200);
-    assert.equal((await call(deo2, "GET", "/notifications")).status, 401, "blocked DEO is logged out");
     await prisma().assignment.updateMany({ where: { deoId: "DEO127", status: "active" }, data: { status: "cancelled" } });
-    const blockedAssign = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO127", pincode: pin() }));
-    assert.equal(blockedAssign.status, 409);
-    assert.match((await blockedAssign.json()).error.message, /blocked/);
+    // Inactive: can still log in, but gets no work.
+    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "inactive" })).status, 200);
+    assert.equal((await call(deo2, "GET", "/notifications")).status, 200, "inactive employee stays logged in");
+    const inactiveAssign = await call(admin, "POST", "/admin/assignments", work({ deoId: "DEO127", pincode: pin() }));
+    assert.equal(inactiveAssign.status, 409);
+    assert.match((await inactiveAssign.json()).error.message, /inactive/);
+    // Reject needs a reason and logs the employee out.
+    assert.equal((await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "rejected" })).status, 400);
+    const rej = await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "rejected", reason: "Aadhaar photo not readable" });
+    assert.equal(rej.status, 200);
+    assert.equal((await call(deo2, "GET", "/notifications")).status, 401, "rejected employee is logged out");
+    const l = await fetch(base + "/api/v1/auth/login", { method: "POST", headers: H, body: JSON.stringify({ loginId: "DEO127", password: "Abcd@2026" }) });
+    assert.equal(l.status, 403);
+    const le = (await l.json()).error;
+    assert.equal(le.code, "ACCOUNT_REJECTED");
+    assert.match(le.message, /Aadhaar photo not readable/);
     assert.equal((await call(admin, "PATCH", "/admin/operators/DEO127/status", { status: "active" })).status, 200);
+    deo2 = await login("DEO127", "Abcd@2026");
+    // Block and village are not needed any more.
+    const { block: _b, village: _v, ...noArea } = work({ deoId: "DEO127", pincode: pin() });
+    const ok = await call(admin, "POST", "/admin/assignments", noArea);
+    assert.equal(ok.status, 201);
+    await prisma().assignment.updateMany({ where: { deoId: "DEO127", status: "active" }, data: { status: "cancelled" } });
   });
 
   test("notifications can be marked read", async () => {

@@ -19,9 +19,14 @@ enum Role {
   admin
 }
 
+/// active: can work · pending: registered, waiting for admin approval · inactive: no new work
+/// (can still log in and see payments) · rejected / blocked: cannot log in.
 enum UserStatus {
   active
   blocked
+  pending
+  inactive
+  rejected
 }
 
 /// Every portal account: Data Entry Operator, Verifier or Super Admin.
@@ -33,6 +38,8 @@ model User {
   email             String?    @unique // stored lower-case
   passwordHash      String     @map("password_hash") // bcrypt, never plain text
   status            UserStatus @default(active)
+  statusReason      String?    @map("status_reason") // shown to the employee (e.g. why rejected)
+  statusChangedAt   DateTime?  @map("status_changed_at") @db.Timestamptz(6)
   failedLoginCount  Int        @default(0) @map("failed_login_count")
   lockedUntil       DateTime?  @map("locked_until") @db.Timestamptz(6)
   lastLoginAt       DateTime?  @map("last_login_at") @db.Timestamptz(6)
@@ -52,6 +59,8 @@ model User {
   entriesVerified     Entry[]        @relation("VerifiedEntries")
   entriesToVerify     Entry[]        @relation("AssignedEntries")
   areasToVerify       Assignment[]   @relation("VerifierAssignments")
+  payments            Payment[]      @relation("PaymentsReceived")
+  paymentsRecorded    Payment[]      @relation("PaymentsRecorded")
   verifications       Verification[]
 
   @@map("users")
@@ -316,4 +325,29 @@ model AppSetting {
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("app_settings")
+}
+
+/// A payout receipt: money the admin has paid to a DEO or verifier.
+model Payment {
+  id            String    @id // PAY000001 …
+  userId        String    @map("user_id")
+  role          Role
+  amount        Int // ₹
+  transactionId String    @unique @map("transaction_id") @db.VarChar(60)
+  payeeName     String    @map("payee_name")
+  mode          String // UPI / NEFT / IMPS / RTGS / Bank transfer / Cheque / Cash
+  paidOn        DateTime  @map("paid_on") @db.Date
+  entriesCount  Int?      @map("entries_count") // entries this payment covers
+  periodFrom    DateTime? @map("period_from") @db.Date
+  periodTo      DateTime? @map("period_to") @db.Date
+  notes         String?
+  createdById   String    @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user      User @relation("PaymentsReceived", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User @relation("PaymentsRecorded", fields: [createdById], references: [id])
+
+  @@index([userId, paidOn(sort: Desc)])
+  @@index([role, paidOn(sort: Desc)])
+  @@map("payments")
 }

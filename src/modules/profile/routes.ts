@@ -31,7 +31,7 @@ profileRouter.get("/me", requireAuth(), async (req, res) => {
   const p = u.profile;
   res.json({
     user: {
-      id: u.id, role: u.role, name: u.name, mobile: u.mobile, email: u.email, status: u.status, joinedAt: u.createdAt,
+      id: u.id, role: u.role, name: u.name, mobile: u.mobile, email: u.email, status: u.status, statusReason: u.statusReason, joinedAt: u.createdAt,
       profile: p && {
         fatherName: p.fatherName, motherName: p.motherName, dob: p.dob.toISOString().slice(0, 10), gender: p.gender,
         category: p.category, religion: p.religion, altMobile: p.altMobile, qualification: p.qualification,

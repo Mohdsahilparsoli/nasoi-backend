@@ -32,8 +32,9 @@ export const createAssignmentSchema = z
     ratePerEntry: z.coerce.number({ error: "Enter the DEO amount" }).int("Enter a whole number").min(1, "Amount must be at least ₹1").max(1000, "Amount is too high"),
     state: z.string().refine((s) => s in STATE_DISTRICTS, "Select a valid state / union territory"),
     district: z.string().min(1, "Select district"),
-    block: text("Block / Tehsil", 2, 60),
-    village: text("Village / Ward", 2, 60),
+    // Block and village are no longer asked when assigning (PIN code is the area); kept for older work.
+    block: z.string().trim().max(60, "Block / Tehsil is too long").optional().default(""),
+    village: z.string().trim().max(60, "Village / Ward is too long").optional().default(""),
     pincode: z.string().trim().regex(/^[1-9]\d{5}$/, "Enter a valid 6-digit PIN code"),
     deadline: z
       .string()

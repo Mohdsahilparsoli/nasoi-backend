@@ -19,8 +19,16 @@ const ROTATION_GRACE_MS = 30_000;
 const INVALID = "Invalid ID / Mobile / Email or Password.";
 const EXPIRED = "Session expired. Please log in again.";
 
-export type PublicUser = Pick<User, "id" | "role" | "name" | "email" | "mobile">;
-const toPublic = (u: User): PublicUser => ({ id: u.id, role: u.role, name: u.name, email: u.email, mobile: u.mobile });
+export type PublicUser = Pick<User, "id" | "role" | "name" | "email" | "mobile" | "status">;
+const toPublic = (u: User): PublicUser => ({ id: u.id, role: u.role, name: u.name, email: u.email, mobile: u.mobile, status: u.status });
+
+/**
+ * Who may log in: active employees, those waiting for approval (pending) and
+ * inactive ones (they still see their entries and payments, but get no work).
+ * Rejected and blocked accounts cannot log in.
+ */
+export const CAN_LOGIN = ["active", "pending", "inactive"] as const satisfies readonly User["status"][];
+const canLogin = (s: User["status"]) => (CAN_LOGIN as readonly string[]).includes(s);
 
 /** Accepts a User ID, a 10 digit mobile (with or without +91 / spaces) or an email. */
 export function normaliseLoginId(raw: string) {
@@ -90,8 +98,11 @@ export async function login(req: Request, loginId: string, password: string) {
   }
 
   // Only reveal "blocked" after the correct password, so it cannot be used to discover accounts.
-  if (user.status !== "active") {
+  if (!canLogin(user.status)) {
     await audit(req, "login.blocked", user.id);
+    if (user.status === "rejected") {
+      throw new HttpError(403, `Your registration was not approved${user.statusReason ? `: ${user.statusReason}` : ""}. Please contact the NASOI admin.`, "ACCOUNT_REJECTED");
+    }
     throw new HttpError(403, "This account has been blocked by the admin. Please contact support.", "ACCOUNT_BLOCKED");
   }
 
@@ -109,7 +120,7 @@ export async function refresh(req: Request, role: Role, raw: unknown) {
 
   const s = await db.authSession.findUnique({ where: { id: parsed.sessionId }, include: { user: true } });
   if (!s || s.role !== role || s.revokedAt || s.expiresAt.getTime() <= Date.now()) throw new HttpError(401, EXPIRED, "NO_SESSION");
-  if (s.user.status !== "active" || s.user.role !== role) {
+  if (!canLogin(s.user.status) || s.user.role !== role) {
     await revokeSession(s.id, "user_inactive");
     throw new HttpError(401, EXPIRED, "NO_SESSION");
   }
@@ -155,7 +166,7 @@ export async function logout(req: Request, raw: unknown) {
 /** Used by requireAuth on every request: the session must still be live and the user active. */
 export async function sessionIsLive(sessionId: string, userId: string) {
   const n = await prisma().authSession.count({
-    where: { id: sessionId, userId, revokedAt: null, expiresAt: { gt: new Date() }, user: { status: "active" } },
+    where: { id: sessionId, userId, revokedAt: null, expiresAt: { gt: new Date() }, user: { status: { in: [...CAN_LOGIN] } } },
   });
   return n > 0;
 }
@@ -204,7 +215,7 @@ export async function forgotPassword(req: Request, email: string) {
   const started = Date.now();
   try {
     const user = await prisma().user.findUnique({ where: { email: email.trim().toLowerCase() } });
-    if (!user || user.status !== "active") {
+    if (!user || !canLogin(user.status)) {
       await audit(req, "password.reset_requested", null, { found: false });
       return;
     }
@@ -238,7 +249,7 @@ export async function resetPassword(req: Request, token: string, newPassword: st
   const db = prisma();
   const user = await db.user.findUnique({ where: { id: claims.sub } });
   // A changed password (including a previous reset with this link) changes the fingerprint.
-  if (!user || user.status !== "active" || passwordFingerprint(user.passwordHash) !== claims.pwf) throw invalid;
+  if (!user || !canLogin(user.status) || passwordFingerprint(user.passwordHash) !== claims.pwf) throw invalid;
   if (await bcrypt.compare(newPassword, user.passwordHash)) {
     throw new HttpError(400, "New password must be different from the current password.", "SAME_PASSWORD");
   }

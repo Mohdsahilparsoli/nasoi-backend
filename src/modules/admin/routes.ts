@@ -5,26 +5,31 @@ import { changeVerifierSchema, createAssignmentSchema, updateAssignmentSchema } 
 import { changeVerifier, createAssignment, listAssignments, listVerifiers, updateAssignmentStatus } from "../assignments/service.js";
 import { audit } from "../../lib/audit.js";
 import { getSettings, settingsSchema, updateSettings } from "../../lib/settings.js";
-import { exportApproved, exportOptions, listAdminEntries, parseFilter } from "./entries.js";
-import { getOperator, listOperators, setOperatorStatus } from "./operators.js";
+import { emailToSchema } from "../../lib/files.js";
+import { adminPayoutsRouter } from "../payments/routes.js";
+import { emailApproved, exportApproved, exportOptions, listAdminEntries, parseFilter } from "./entries.js";
+import { employeeStatusSchema, getEmployee, listEmployees, setEmployeeStatus } from "./operators.js";
 
 /** Everything under /api/v1/admin requires a Super Admin login. */
 export const adminRouter = Router();
 adminRouter.use(noStore, requireAuth("admin"));
+adminRouter.use(adminPayoutsRouter);
 
 const q = (v: unknown) => (typeof v === "string" && v.length <= 60 ? v : undefined);
 
+/** GET /admin/operators?role=deo|verifier&q= – employees (DEOs and verifiers). */
 adminRouter.get("/operators", async (req, res) => {
-  res.json({ operators: await listOperators(q(req.query.q)) });
+  const role = req.query.role === "deo" || req.query.role === "verifier" ? req.query.role : undefined;
+  res.json({ operators: await listEmployees({ q: q(req.query.q), role }) });
 });
 
 adminRouter.get("/operators/:id", async (req, res) => {
-  res.json({ operator: await getOperator(String(req.params.id)) });
+  res.json({ operator: await getEmployee(String(req.params.id)) });
 });
 
+/** PATCH /admin/operators/:id/status – { status: active | inactive | rejected, reason? } */
 adminRouter.patch("/operators/:id/status", async (req, res) => {
-  const { status } = z.object({ status: z.enum(["active", "blocked"]) }).parse(req.body);
-  res.json(await setOperatorStatus(req, req.auth!.sub, String(req.params.id), status));
+  res.json(await setEmployeeStatus(req, req.auth!.sub, String(req.params.id), employeeStatusSchema.parse(req.body)));
 });
 
 adminRouter.get("/assignments", async (req, res) => {
@@ -74,6 +79,13 @@ adminRouter.get("/entries", async (req, res) => {
 /** GET /admin/entries/export-options – PIN codes, DEOs, verifiers … that have approved entries. */
 adminRouter.get("/entries/export-options", async (_req, res) => {
   res.json(await exportOptions());
+});
+
+/** POST /admin/entries/export/email { to, format, filters… } – send the export as an e-mail attachment. */
+adminRouter.post("/entries/export/email", async (req, res) => {
+  const { to } = emailToSchema.parse(req.body);
+  const { format, to: _t, ...rest } = (req.body ?? {}) as Record<string, unknown>;
+  res.json(await emailApproved(req, req.auth!.sub, parseFilter(rest), format === "csv" ? "csv" : "xlsx", to));
 });
 
 /** GET /admin/entries/export?format=xlsx|csv&<filters> – approved entries only. No filters = export all. */
